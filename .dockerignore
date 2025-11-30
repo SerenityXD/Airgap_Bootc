@@ -1,0 +1,14 @@
+# Ignore typical OS and packaging cache files to keep the build context small
+.git
+.gitignore
+*.pyc
+__pycache__/
+venv/
+env/
+build/
+dist/
+*.egg-info
+node_modules/
+*.log
+/.cache
+/var/cache

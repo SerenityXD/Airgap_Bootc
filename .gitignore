@@ -1,0 +1,79 @@
+# OS/editor cruft
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*.tmp
+*.temp
+*.bak
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.tox/
+.venv/
+venv/
+
+# Node
+node_modules/
+
+# Logs
+*.log
+logs/
+log/
+
+# Generic build artifacts
+build/
+dist/
+.tmp/
+.cache/
+
+# Bootc/Ostree artifacts and outputs
+bootc_ostree/output/
+bootc_ostree/oci-image/
+**/bootiso/
+**/iso-build.log
+
+# Large binary formats (keep repo lean)
+*.iso
+*.oci
+*.img
+*.qcow2
+*.vmdk
+*.vdi
+*.ova
+*.ovf
+*.bin
+*.rpm
+*.deb
+*.AppImage
+*.vsix
+
+# Archives and large compressed files
+*.tar
+*.tar.*
+*.zip
+*.7z
+*.rar
+*.xz
+*.gz
+*.bz2
+*.zst
+*.lz4
+*.lz
+
+# Vendor/third-party payloads (often large)
+bootc_ostree/image/rpmfusion/**/*
+bootc_ostree/image/nvidia/**/*
+bootc_ostree/image/vscode/**/*
+bootc_ostree/image/winehq/**/*
+bootc_ostree/image/docker-desktop/**/*
+
+# Allow directory markers
+!.gitkeep

@@ -1,0 +1,259 @@
+# Bootc system image for air-gapped KDE workstation
+# Includes: KDE, dev tools, NVIDIA/CUDA, ML, multimedia, Docker Desktop, VS Code
+
+FROM quay.io/fedora/fedora-bootc:43
+
+# System metadata
+LABEL name="SCVU Bootc Workstation"
+LABEL version="1.0"
+LABEL description="Air-gapped KDE workstation with dev tools, NVIDIA, ML, multimedia"
+
+# Minimize dnf footprint and locales
+RUN sed -i '/^tsflags/ d' /etc/dnf/dnf.conf && echo 'tsflags=nodocs' >> /etc/dnf/dnf.conf && \
+    dnf -y install glibc-minimal-langpack langpacks-en || true && \
+    dnf -y remove glibc-all-langpacks || true && \
+    dnf -y clean all && rm -rf /var/cache/dnf
+
+# Install KDE Desktop and base system
+RUN dnf -y install \
+    # KDE Desktop (skip @core as it's already in base image)
+    @kde-desktop-environment @kde-apps \
+    sddm filelight \
+    # Display server
+    xorg-x11-server-Xorg \
+    mesa-dri-drivers \
+    # Additional tools
+    make gcc gcc-c++ cmake automake autoconf \
+    python3-pip python3-devel \
+    git fastfetch \
+    network-manager-applet \
+    kernel-devel kernel-modules-extra \
+    # Container tools
+    slirp4netns conntrack-tools bridge-utils \
+    # Remote desktop
+    xrdp xorgxrdp \
+    && dnf -y clean all && rm -rf /var/cache/dnf
+
+# Install multimedia and creator tools
+RUN dnf -y install \
+    # Office and productivity
+    libreoffice \
+    && dnf -y clean all && rm -rf /var/cache/dnf
+
+# Install multiple Python versions
+RUN dnf -y install \
+    python3.9 python3.10 python3.11 python3.12 python3.13 \
+    # Python ML/data science from Fedora repos
+    python3-numpy python3-scipy python3-pandas \
+    python3-matplotlib python3-scikit-learn \
+    python3-jupyter-core python3-notebook python3-ipython \
+    python3-seaborn python3-opencv \
+    hdf5 hdf5-devel openblas-devel \
+    lapack lapack-devel \
+    && dnf -y clean all && rm -rf /var/cache/dnf
+
+# Install Node.js and JavaScript tools
+RUN dnf -y install \
+    nodejs npm yarn \
+    && dnf -y clean all && rm -rf /var/cache/dnf
+
+# Install 3D graphics
+RUN dnf -y install \
+    blender \
+    && dnf -y clean all && rm -rf /var/cache/dnf
+
+# Install database viewers/tools
+RUN dnf -y install \
+    sqlite sqlite-devel \
+    sqlitebrowser \
+    && dnf -y clean all && rm -rf /var/cache/dnf
+
+# Filesystem support
+RUN dnf -y install \
+    ntfs-3g ntfsprogs exfatprogs \
+    e2fsprogs btrfs-progs xfsprogs f2fs-tools dosfstools \
+    && dnf -y clean all && rm -rf /var/cache/dnf
+
+# Boot and bootloader packages
+RUN dnf -y install \
+    grub2-pc grub2-pc-modules \
+    grub2-efi-x64 grub2-efi-x64-modules grub2-efi-x64-cdboot \
+    grub2-efi-ia32 grub2-efi-ia32-cdboot \
+    grub2-tools grub2-tools-efi \
+    syslinux efibootmgr \
+    shim-x64 shim-ia32 \
+    dracut-live \
+    && dnf -y clean all && rm -rf /var/cache/dnf
+
+# Create directories for third-party packages
+RUN mkdir -p /tmp/rpms/{nvidia,vscode,rpmfusion,winehq,docker-desktop}
+
+# Install RPM Fusion packages (if available offline)
+# These will be installed from mounted cache during build
+COPY rpmfusion/ /tmp/rpms/rpmfusion/
+RUN dnf -y install /tmp/rpms/rpmfusion/*.rpm || true
+
+# Install NVIDIA drivers (from RPM Fusion or NVIDIA repo)
+COPY nvidia/ /tmp/rpms/nvidia/
+RUN dnf -y install /tmp/rpms/nvidia/*.rpm || true
+
+# Install VS Code
+COPY vscode/ /tmp/rpms/vscode/
+RUN dnf -y install /tmp/rpms/vscode/*.rpm || true
+
+# Install WineHQ and Bottles
+COPY winehq/ /tmp/rpms/winehq/
+RUN dnf -y install /tmp/rpms/winehq/*.rpm || true
+
+# Install Docker Desktop
+COPY docker-desktop/ /tmp/rpms/docker-desktop/
+# Install Docker Desktop RPM offline; skip online repo if network unavailable
+RUN dnf -y install dnf-plugins-core || true && \
+    (curl -fsSL https://download.docker.com/linux/fedora/docker-ce.repo -o /etc/yum.repos.d/docker-ce.repo && \
+     dnf -y install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin || true) || true && \
+    dnf -y install /tmp/rpms/docker-desktop/*.rpm || true
+
+# Clean up RPM temp directory
+RUN rm -rf /tmp/rpms
+
+
+# Copy VS Code extensions
+RUN mkdir -p /opt/vscode-extensions
+COPY vscode-extensions/*.vsix /opt/vscode-extensions/
+# Extensions will be installed per-user via scvu-post-install.sh
+
+# Copy post-install scripts
+COPY post-install/ /opt/post-install/
+RUN chmod +x /opt/post-install/*.sh 2>/dev/null || true
+
+# Include image README inside the system image (alongside helper scripts)
+COPY README.md /usr/local/bin/SCVU-README.md
+
+# Remove ML installer script (not used); keep directory only
+
+# Create JavaScript frameworks installer
+RUN cat > /usr/local/bin/install-js-frameworks.sh <<'EOF'
+#!/bin/bash
+# Install JavaScript frameworks globally
+set -e
+echo "Installing JavaScript frameworks..."
+npm install -g create-react-app @vue/cli @angular/cli create-next-app \
+  vite webpack webpack-cli typescript ts-node \
+  jest mocha eslint prettier pnpm || true
+echo "JavaScript frameworks installed"
+EOF
+RUN chmod +x /usr/local/bin/install-js-frameworks.sh
+
+# Create consolidated post-install script
+RUN cat > /usr/local/bin/scvu-post-install.sh <<'EOF'
+#!/bin/bash
+set -e
+
+echo "SCVU Post-Install: starting"
+
+install_extensions_for_user() {
+    local U="$1"
+    [ -n "$U" ] || return 0
+    if ! command -v code >/dev/null 2>&1; then
+        echo "VS Code not found; skipping for $U"; return 0
+    fi
+    local HOME_DIR
+    HOME_DIR=$(getent passwd "$U" | awk -F: '{print $6}')
+    [ -d "$HOME_DIR" ] || { echo "Home not found for $U"; return 0; }
+    mkdir -p "$HOME_DIR/.config/Code"
+    chown -R "$U":"$U" "$HOME_DIR/.config"
+    for VSIX in /opt/vscode-extensions/*.vsix; do
+        [ -f "$VSIX" ] || continue
+        echo "Installing $(basename "$VSIX") for user $U"
+        runuser -l "$U" -c "code --install-extension '$VSIX' --force --user-data-dir '$HOME_DIR/.config/Code' --no-sandbox" || true
+    done
+}
+
+# 1) Install VS Code extensions for specified users (args) or all local users
+if command -v code >/dev/null 2>&1; then
+    if [ "$#" -gt 0 ]; then
+        echo "Installing VS Code extensions for specified users: $*"
+        for U in "$@"; do install_extensions_for_user "$U"; done
+    else
+        echo "Installing VS Code extensions for each local user..."
+        mapfile -t USERS < <(getent passwd | awk -F: '$6 ~ /^\/home\// {print $1}')
+        for U in "${USERS[@]}"; do install_extensions_for_user "$U"; done
+    fi
+else
+    echo "VS Code not found; skipping extension installation"
+fi
+
+# 2) Place README on each user's Desktop
+if [ -f /usr/local/bin/SCVU-README.md ]; then
+    echo "Copying README to each user's Desktop..."
+    mapfile -t USERS < <(getent passwd | awk -F: '$6 ~ /^\/home\// {print $1}')
+    for U in "${USERS[@]}"; do
+        HOME_DIR=$(getent passwd "$U" | awk -F: '{print $6}')
+        [ -d "$HOME_DIR" ] || continue
+        mkdir -p "$HOME_DIR/Desktop"
+        cp /usr/local/bin/SCVU-README.md "$HOME_DIR/Desktop/SCVU-README.md"
+        chown "$U":"$U" "$HOME_DIR/Desktop/SCVU-README.md"
+    done
+fi
+
+# 3) Enable services
+echo "Enabling GUI and RDP services..."
+sudo systemctl enable sddm || true
+sudo systemctl enable xrdp || true
+sudo systemctl set-default graphical.target || true
+
+# 4) NVIDIA driver post steps (if installed)
+if command -v nvidia-smi >/dev/null 2>&1; then
+    echo "NVIDIA detected; updating initramfs..."
+    sudo dracut -f || true
+fi
+
+# 5) Docker Desktop group sanity
+if getent group docker >/dev/null 2>&1; then
+    echo "Ensuring current user is in docker group..."
+    sudo usermod -aG docker "$USER" || true
+fi
+
+echo "SCVU Post-Install: complete"
+EOF
+RUN chmod +x /usr/local/bin/scvu-post-install.sh
+
+# Create docker group and users
+RUN groupadd -f docker && \
+    useradd -m -G wheel,docker -s /bin/bash IAC 2>/dev/null || true && \
+    useradd -m -G docker -s /bin/bash AIBUser 2>/dev/null || true
+
+# Set passwords (password: fedora - CHANGE THIS!)
+RUN echo 'root:fedora' | chpasswd && \
+    echo 'IAC:fedora' | chpasswd && \
+    echo 'AIBUser:fedora' | chpasswd
+
+# Enable services
+RUN systemctl enable sddm || true && \
+    systemctl enable xrdp || true && \
+    systemctl set-default graphical.target || true
+
+# Create README in users' home
+RUN cat > /etc/skel/README.txt <<'EOF'
+Welcome to SCVU Bootc Workstation
+==================================
+
+Users:
+- IAC (admin, sudo access)
+- AIBUser (standard user)
+Both: password is 'fedora' - CHANGE IT!
+
+Post-install tasks:
+1. Change passwords: passwd
+2. Install JS frameworks: /usr/local/bin/install-js-frameworks.sh
+3. Run consolidated post install: sudo /usr/local/bin/scvu-post-install.sh
+
+All users are in the docker group for Docker Desktop.
+EOF
+
+# Bootc configuration
+RUN echo 'SCVU Bootc' > /etc/hostname && \
+    (grep -q "\bSCVU Bootc\b" /etc/hosts || echo "127.0.1.1    SCVU Bootc" >> /etc/hosts)
+
+# Final cleanup
+RUN dnf -y clean all && rm -rf /var/cache/dnf /tmp/* /var/tmp/*

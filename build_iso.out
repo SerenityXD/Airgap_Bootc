@@ -1,0 +1,25 @@
+nohup: ignoring input
+=== Building Air-Gapped Bootable ISO ===
+Project: SCVU
+Fedora Release: 43
+Repository: /home/benson/Documents/Bootc_Test/kickstart/../airgap-packages-full
+Output: /home/benson/Documents/Bootc_Test/kickstart/../out-airgap
+
+Setting up repository access...
+Mounting repository cache to /var/tmp/bootc-build/airgap-packages-full...
+
+Building ISO with livemedia-creator...
+This may take 30-60 minutes depending on your system...
+
+2025-11-30 00:44:25,337: livemedia-creator v42.8-1
+2025-11-30 00:44:25,338: selinux is enabled and in Enforcing mode
+2025-11-30 00:44:25,408: disk_img = /home/benson/Documents/Bootc_Test/out-airgap/lmc-disk-fc1wpp_w.img
+2025-11-30 00:44:25,408: Using disk size of 10242MiB
+2025-11-30 00:44:25,717: Running anaconda.
+2025-11-30 00:44:26,726: Starting installer, one moment...
+2025-11-30 00:44:26,726: terminal size detection failed, using default width
+2025-11-30 00:44:26,726: 00:44:26 Enforcing the non-interactive text mode for dir and image installations.
+2025-11-30 00:44:29,495: Processing logs from ('127.0.0.1', 44672)
+2025-11-30 00:44:29,729: anaconda 42.27.13-1.fc42 for SCVU 43 (pre-release) started.
+Terminated
+Cleaning up...
