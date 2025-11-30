@@ -104,6 +104,6 @@ This will:
 - If air-gapped, skip online repo steps; use offline RPMs under `image/` subfolders.
 
 Third-party RPMs integration:
-- Place offline RPMs under `bootc_ostree/image/` subfolders: `rpmfusion/`, `nvidia/`, `vscode/`, `winehq/`, `docker-desktop/`
+- Place offline RPMs under `bootc_ostree/image/offline-repo/` subfolders: `rpmfusion/`, `nvidia/`, `vscode/`, `winehq/`, `docker-desktop/`
 - VS Code extensions: put `.vsix` files in `bootc_ostree/image/vscode-extensions/`
 - The `Containerfile` copies and installs these if present during build

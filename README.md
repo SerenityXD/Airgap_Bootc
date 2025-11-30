@@ -1,121 +1,90 @@
-# Fedora Bootable ISO - Air-Gapped ML/AI Development Environment
+# Fedora Bootc/Ostree Air-Gapped ISO
 
-This repository contains kickstart files and scripts to build a fully offline, air-gapped bootable Fedora 43 ISO for ML/AI development and general computing.
+This repository builds a fully offline, air-gapped installer ISO by embedding a prebuilt bootc (container-based) system image. The ISO provisions the image without contacting network repos, making it ideal for air‑gapped installs.
+
+We previously attempted an Anaconda/kickstart flow, but pivoted to bootc/ostree for reliability and offline friendliness. The kickstart approach is no longer used.
 
 ## What's Included
 
-- **Desktop Environment**: KDE Plasma with SDDM display manager
-- **Development Tools**: 
-  - Python 3.9-3.13 with pip for each version
-  - VS Code with Python and Jupyter extensions (offline)
-  - Node.js, npm, yarn
-  - git, gcc, make, kernel-devel
-- **Containerization**: Docker Desktop (GUI + CLI)
-- **GPU Support**: NVIDIA drivers and CUDA toolkit
-- **Machine Learning**: TensorFlow, PyTorch, transformers, scikit-learn, Jupyter (offline Python wheels)
-- **3D Graphics**: Blender (Unreal Engine via post-ISO installation)
-- **Multimedia**: mpv, OBS Studio, ffmpeg, codec plugins
-- **Windows Compatibility**: WineHQ stable, Bottles
-- **Office Suite**: LibreOffice
-- **Remote Access**: xrdp (RDP server)
-- **Filesystem Support**: NTFS, exFAT, ext4, Btrfs, XFS, F2FS
-- **Users**: IAC (admin with sudo), AIBUser (standard) - both in docker group
+- Desktop: KDE Plasma with SDDM
+- Dev tools: gcc, cmake, git, make, fastfetch
+- Multiple Python versions: 3.9–3.13 (with pip)
+- Node.js + npm + yarn
+- VS Code; offline VSIX extensions supported
+- Docker Desktop (offline RPM), docker group handling
+- WineHQ stable
+- Multimedia: ffmpeg, mpv, OBS, codec packs (RPM Fusion)
+- Filesystems: NTFS, exFAT, Btrfs, ext4, XFS, F2FS
+- Remote access: xrdp
+- Users: IAC (admin) and AIBUser (standard), both in `docker`
 
-## Quick Start
+Exact contents are defined in `bootc_ostree/image/Containerfile` and may vary by build inputs and available offline payloads.
 
-### Preflight (Online Prep Machine)
+## Quick Start (Scripted)
 
-Ensure the following on the internet-connected machine:
-- Tools: `dnf`, `curl`, `createrepo_c`, `python3`
-- Optional: `python3.9`-`python3.13` available to fetch matching wheels
-- Disk: 40-50 GB free
-- Network: Stable internet
-
-Quick checks:
+Use the helper script to build the image, export an OCI archive, load it into rootful Podman, compose the ISO, and verify the result.
 
 ```bash
-command -v dnf && command -v curl && command -v createrepo_c || echo "Missing tools"
-for v in 3.9 3.10 3.11 3.12 3.13; do command -v python${v} || true; done
-df -h .
+/home/$USER/Documents/Bootc_Test/bootc_ostree/build_export_iso.sh
 ```
 
-Install missing metadata tool:
-```bash
-sudo dnf -y install createrepo_c
-```
-### 1. Prepare Air-Gap Repository (Requires Internet)
-
-On a machine with internet access:
+Optional overrides:
 
 ```bash
-./kickstart/prepare_airgap_repo.sh
+TAG=localhost/scvu-bootc:kde \
+OUTPUT_DIR=/home/$USER/Documents/Bootc_Test/bootc_ostree/output \
+OCI_PATH=/home/$USER/Documents/Bootc_Test/bootc_ostree/oci-image/scvu-bootc-kde.oci \
+ROOTFS=btrfs \
+/home/$USER/Documents/Bootc_Test/bootc_ostree/build_export_iso.sh
 ```
 
-This downloads all packages, Python wheels, and VS Code extensions (~15-30 GB).
+Manual step‑by‑step commands and notes are in `bootc_ostree/README.md`.
 
-### 2. Build Bootable ISO
+## Build Pipeline Overview
+
+1) Build the bootc system image via Podman
+2) Export to an OCI archive (rootless → rootful bridge)
+3) Load into rootful Podman
+4) Use `bootc-image-builder` to compose an installer ISO (Btrfs rootfs)
+5) Verify ISO under `bootc_ostree/output/bootiso/install.iso`
+
+## Artifacts and Disk Usage
+
+- ISO: `bootc_ostree/output/bootiso/install.iso` (observed ~13 GB)
+- OCI archive: `bootc_ostree/oci-image/scvu-bootc-kde.oci` (observed ~12 GB)
+- Container image size in storage: ~28 GB
+
+Recommendation: Have 60–100 GB free during builds to accommodate layers, caches, and artifacts.
+
+## Post-Install
+
+After installing from the ISO, run once:
 
 ```bash
-sudo livemedia-creator --make-iso --no-virt \
-  --ks kickstart/bootc-airgap.ks \
-  --project bootc-airgap \
-  --resultdir out-airgap \
-  --tmp /var/tmp \
-  --cachedir $PWD/airgap-packages-full
+sudo /usr/local/bin/scvu-post-install.sh
 ```
 
-Build time: 20-40 minutes | ISO size: ~10-20 GB
+This will:
+- Install VS Code extensions per user from `/opt/vscode-extensions` if present
+- Enable SDDM and XRDP; set default to graphical target
+- Rebuild initramfs if NVIDIA drivers are present
+- Ensure the current user is in the `docker` group
 
-### 3. Fix Ownership and Transfer
+## Notes
 
-```bash
-sudo chown -R "$(id -un)":"$(id -gn)" out-airgap/
-# Burn to USB or transfer to air-gapped environment
-```
-
-## Files
-
-- `kickstart/bootc-airgap.ks` - Main kickstart file for air-gapped ISO
-- `kickstart/prepare_airgap_repo.sh` - Script to download all offline packages
-- `kickstart/README_AirGap.md` - Detailed documentation (copied to ISO)
-- `airgap-packages-full/` - Downloaded packages cache (~15-30 GB, created by prep script)
-
-## Post-Installation
-
-After booting from the ISO:
-
-1. **Install ML/AI packages**: `/usr/local/bin/install-ml-packages.sh`
-2. **Install JavaScript frameworks**: `/usr/local/bin/install-js-frameworks.sh`
-3. **Install Unreal Engine** (optional): `/usr/local/bin/install-unreal-engine.sh`
-4. **Start Docker Desktop**: Launch from KDE menu or `systemctl --user enable --now docker-desktop`
+- NVIDIA: Bare‑metal GPU support may require akmods packages and Secure Boot considerations. VM environments won’t expose `nvidia-smi` without a passthrough GPU.
+- Air‑gapped resilience: Third‑party RPMs (RPM Fusion, NVIDIA, VS Code, WineHQ, Docker Desktop) can be supplied offline under `bootc_ostree/image/offline-repo/` subfolders. The build guards online fetches when air‑gapped.
 
 ## Documentation
 
-Full documentation is available in:
-- `kickstart/README_AirGap.md` - Complete guide with troubleshooting
-- `/usr/share/doc/bootc-airgap/README_AirGap.md` - On installed system
+- Full build and export guide: `bootc_ostree/README.md`
+- Bootc image definition: `bootc_ostree/image/Containerfile`
 
-## System Requirements
+## Requirements
 
-- **Build Machine**: 40-50 GB free space, internet access
-- **Target Machine**: 20+ GB disk, 4+ GB RAM, UEFI or BIOS boot
-- **GPU Support** (optional): NVIDIA GPU with compatible drivers
-
-## Customization
-
-- **Change hostname**: Edit `network --hostname=` in `kickstart/bootc-airgap.ks`
-- **Change project name**: Use `--project your-name` in livemedia-creator command
-- **Modify packages**: Edit package list in `kickstart/bootc-airgap.ks`
-- **Add repos**: Extend `kickstart/prepare_airgap_repo.sh`
-
-## Security Notes
-
-- Default root password is encrypted placeholder - **change during installation**
-- Users IAC and AIBUser are created during installation
-- Both users have docker group access
-- xrdp enabled on port 3389 for remote desktop access
-- Firewall configured automatically
+- Build machine: Podman, internet access for initial builds (unless fully offline payloads are supplied), and adequate disk space (60–100 GB recommended)
+- Target machine: 20+ GB disk, 4+ GB RAM, UEFI or BIOS boot
 
 ## Support
 
-For detailed installation instructions, troubleshooting, and advanced configuration, see `kickstart/README_AirGap.md`.
+Open issues or questions in this repo. For implementation details, see `bootc_ostree/README.md` and the embedded comments in the `Containerfile`.

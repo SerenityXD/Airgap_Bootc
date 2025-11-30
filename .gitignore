@@ -69,11 +69,7 @@ bootc_ostree/oci-image/
 *.lz
 
 # Vendor/third-party payloads (often large)
-bootc_ostree/image/rpmfusion/**/*
-bootc_ostree/image/nvidia/**/*
-bootc_ostree/image/vscode/**/*
-bootc_ostree/image/winehq/**/*
-bootc_ostree/image/docker-desktop/**/*
+bootc_ostree/image/offline-repo/**/*
 
 # Allow directory markers
 !.gitkeep

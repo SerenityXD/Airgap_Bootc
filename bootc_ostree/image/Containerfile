@@ -90,23 +90,23 @@ RUN mkdir -p /tmp/rpms/{nvidia,vscode,rpmfusion,winehq,docker-desktop}
 
 # Install RPM Fusion packages (if available offline)
 # These will be installed from mounted cache during build
-COPY rpmfusion/ /tmp/rpms/rpmfusion/
+COPY offline-repo/rpmfusion/ /tmp/rpms/rpmfusion/
 RUN dnf -y install /tmp/rpms/rpmfusion/*.rpm || true
 
 # Install NVIDIA drivers (from RPM Fusion or NVIDIA repo)
-COPY nvidia/ /tmp/rpms/nvidia/
+COPY offline-repo/nvidia/ /tmp/rpms/nvidia/
 RUN dnf -y install /tmp/rpms/nvidia/*.rpm || true
 
 # Install VS Code
-COPY vscode/ /tmp/rpms/vscode/
+COPY offline-repo/vscode/ /tmp/rpms/vscode/
 RUN dnf -y install /tmp/rpms/vscode/*.rpm || true
 
 # Install WineHQ and Bottles
-COPY winehq/ /tmp/rpms/winehq/
+COPY offline-repo/winehq/ /tmp/rpms/winehq/
 RUN dnf -y install /tmp/rpms/winehq/*.rpm || true
 
 # Install Docker Desktop
-COPY docker-desktop/ /tmp/rpms/docker-desktop/
+COPY offline-repo/docker-desktop/ /tmp/rpms/docker-desktop/
 # Install Docker Desktop RPM offline; skip online repo if network unavailable
 RUN dnf -y install dnf-plugins-core || true && \
     (curl -fsSL https://download.docker.com/linux/fedora/docker-ce.repo -o /etc/yum.repos.d/docker-ce.repo && \
