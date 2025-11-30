@@ -30,7 +30,7 @@ RUN dnf -y install \
 COPY ml-wheels/ /opt/ml-wheels/
 
 # Post-boot setup script
-COPY post-install/ /opt/post-install/
+# Post-install folder removed; using consolidated script only
 
 # Enable services as needed
 RUN systemctl enable sddm || true

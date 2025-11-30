@@ -3,7 +3,7 @@
 ## Current Status: ISO Export Complete ✓
 
 **Started:** November 30, 2025  
-**Updated:** November 30, 2025 at 22:17
+**Updated:** November 30, 2025 at 23:35
 
 ### Build Process Stages
 1. ✅ Container image built successfully (52.4 GB)
@@ -23,7 +23,7 @@ ls -lh /home/benson/Documents/Bootc_Test/bootc_ostree/output/bootiso/
 
 ### Outputs
 - **OCI Archive:** `bootc_ostree/oci-image/scvu-bootc-kde.oci`
-- **Installer ISO:** `bootc_ostree/output/bootiso/install.iso` (size: 13G; built Nov 30 22:17)
+- **Installer ISO:** `bootc_ostree/output/bootiso/install.iso` (size: 13G; built Nov 30 23:35)
 - **Build Log:** `bootc_ostree/output/iso-build.log`
 
 ### System Image Contents
@@ -53,7 +53,7 @@ ls -lh /home/benson/Documents/Bootc_Test/bootc_ostree/output/bootiso/
 ### Disk Space Usage
 - Output directory (ISO + manifests): 13 GB
 - OCI archive: 12 GB
-- Container image (rootless & rootful): 27.6 GB each
+- Container image (rootless & rootful): 27.4 GB
 
 ### Next Steps
 1. **Verify ISO:** `ls -lh bootc_ostree/output/bootiso/install.iso`

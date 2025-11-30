@@ -122,9 +122,7 @@ RUN mkdir -p /opt/vscode-extensions
 COPY vscode-extensions/*.vsix /opt/vscode-extensions/
 # Extensions will be installed per-user via scvu-post-install.sh
 
-# Copy post-install scripts
-COPY post-install/ /opt/post-install/
-RUN chmod +x /opt/post-install/*.sh 2>/dev/null || true
+# Post-install scripts folder removed; using consolidated script only
 
 # Include image README inside the system image (alongside helper scripts)
 COPY README.md /usr/local/bin/SCVU-README.md

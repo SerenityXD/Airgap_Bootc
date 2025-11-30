@@ -60,7 +60,10 @@ trap summary EXIT
 # Prepare directories and ensure a clean output area before build
 mkdir -p "$TMPDIR" "$OCI_DIR"
 echo "[prep] Removing output directory $OUTPUT_DIR (if present) ..."
-rm -rf "$OUTPUT_DIR"
+if ! rm -rf "$OUTPUT_DIR" 2>/dev/null; then
+  echo "[prep] rm without sudo failed; retrying with sudo ..."
+  sudo rm -rf "$OUTPUT_DIR" || true
+fi
 mkdir -p "$OUTPUT_DIR"
 
 # 1) Build image (rootless)
