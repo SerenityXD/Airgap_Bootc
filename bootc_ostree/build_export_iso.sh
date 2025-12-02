@@ -19,6 +19,7 @@ TMPDIR="${TMPDIR:-$TMPDIR_DEFAULT}"
 FETCH_OFFLINE="${FETCH_OFFLINE:-false}"
 FETCH_PACKAGES="${FETCH_PACKAGES:-all}"
 SKIP_EXISTING="${SKIP_EXISTING:-true}"
+ISO_NAME="${ISO_NAME:-}"  # Optional custom ISO name
 
 usage() {
   cat <<EOF
@@ -34,22 +35,17 @@ Options (env or flags):
   -f, --fetch-offline           Fetch offline packages before build
   -p, --packages PACKAGES       Packages to fetch (default: all, or: vscode,nvidia,docker-desktop,etc)
   -s, --skip-existing           Skip fetching if packages already exist (default: true)
+  --iso-name NAME               Custom output ISO filename (default: install.iso)
   -h, --help                    Show this help
 
-Environment overrides are honored: TAG, OUTPUT_DIR, OCI_PATH, ROOTFS, BUILDER_IMG, TMPDIR, FETCH_OFFLINE, FETCH_PACKAGES, SKIP_EXISTING
+Environment overrides are honored: TAG, OUTPUT_DIR, OCI_PATH, ROOTFS, BUILDER_IMG, TMPDIR, FETCH_OFFLINE, FETCH_PACKAGES, SKIP_EXISTING, ISO_NAME
 
 Examples:
   # Basic build with online fallback
   $(basename "$0")
 
-  # Build with automatic offline package fetching
-  $(basename "$0") --fetch-offline
-
-  # Fetch specific packages only
-  $(basename "$0") --fetch-offline --packages vscode,nvidia,docker-desktop
-
-  # Custom tag and rootfs
-  $(basename "$0") --tag myimage:latest --rootfs ext4 --fetch-offline
+  # Build with custom ISO name
+  $(basename "$0") --iso-name MyCustom.iso
 EOF
 }
 
@@ -65,6 +61,7 @@ while [[ ${1:-} ]]; do
     -f|--fetch-offline) FETCH_OFFLINE="true"; shift;;
     -p|--packages) FETCH_PACKAGES="$2"; shift 2;;
     -s|--skip-existing) SKIP_EXISTING="true"; shift;;
+    --iso-name) ISO_NAME="$2"; shift 2;;
     -h|--help) usage; exit 0;;
     *) echo "Unknown arg: $1"; usage; exit 2;;
   esac
@@ -187,6 +184,25 @@ else
   echo "  - $CANDIDATE1" >&2
   echo "  - $CANDIDATE2" >&2
   exit 1
+fi
+
+# After ISO creation and verification
+if [[ -n "$ISO_NAME" && -f "$ISO_PATH" ]]; then
+  TARGET_ISO="$OUTPUT_DIR/bootiso/$ISO_NAME"
+  if mv -v "$ISO_PATH" "$TARGET_ISO" 2>/dev/null; then
+    ISO_PATH="$TARGET_ISO"
+  else
+    echo "[rename] mv without sudo failed; retrying with sudo ..."
+    if sudo -n mv -v "$ISO_PATH" "$TARGET_ISO"; then
+      # Attempt to change ownership back to invoking user so the file is accessible
+      sudo -n chown "$(id -u)":"$(id -g)" "$TARGET_ISO" || true
+      ISO_PATH="$TARGET_ISO"
+    else
+      echo "[rename] Warning: sudo requires a password; run manually:" >&2
+      echo "         sudo mv \"$ISO_PATH\" \"$TARGET_ISO\" && sudo chown $(id -u):$(id -g) \"$TARGET_ISO\"" >&2
+      echo "         Or rerun script with: sudo \"$0\" --iso-name \"$ISO_NAME\"" >&2
+    fi
+  fi
 fi
 
 echo ""
