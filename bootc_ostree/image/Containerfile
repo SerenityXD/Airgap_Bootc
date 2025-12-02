@@ -88,30 +88,75 @@ RUN dnf -y install \
 # Create directories for third-party packages
 RUN mkdir -p /tmp/rpms/{nvidia,vscode,rpmfusion,winehq,docker-desktop}
 
-# Install RPM Fusion packages (if available offline)
-# These will be installed from mounted cache during build
+# Install RPM Fusion packages (offline preferred, online fallback)
 COPY offline-repo/rpmfusion/ /tmp/rpms/rpmfusion/
-RUN dnf -y install /tmp/rpms/rpmfusion/*.rpm || true
+RUN if [ -n "$(ls -A /tmp/rpms/rpmfusion/*.rpm 2>/dev/null)" ]; then \
+        echo "Installing RPM Fusion packages from offline repo..."; \
+        dnf -y install /tmp/rpms/rpmfusion/*.rpm || true; \
+    else \
+        echo "Offline RPM Fusion packages not found, attempting online install..."; \
+        dnf -y install \
+            https://download1.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm \
+            https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm || true; \
+        dnf -y install ffmpeg vlc obs-studio \
+            gstreamer1-plugins-bad-free-extras gstreamer1-plugins-ugly \
+            gstreamer1-plugin-openh264 gstreamer1-libav lame x264 x265 || true; \
+    fi
 
-# Install NVIDIA drivers (from RPM Fusion or NVIDIA repo)
+# Install NVIDIA drivers (offline preferred, online fallback)
 COPY offline-repo/nvidia/ /tmp/rpms/nvidia/
-RUN dnf -y install /tmp/rpms/nvidia/*.rpm || true
+RUN if [ -n "$(ls -A /tmp/rpms/nvidia/*.rpm 2>/dev/null)" ]; then \
+        echo "Installing NVIDIA drivers from offline repo..."; \
+        dnf -y install /tmp/rpms/nvidia/*.rpm || true; \
+    else \
+        echo "Offline NVIDIA packages not found, attempting online install..."; \
+        dnf -y install \
+            https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm || true; \
+        dnf -y install akmod-nvidia xorg-x11-drv-nvidia \
+            xorg-x11-drv-nvidia-cuda nvidia-settings || true; \
+    fi
 
-# Install VS Code
+# Install VS Code (offline preferred, online fallback)
 COPY offline-repo/vscode/ /tmp/rpms/vscode/
-RUN dnf -y install /tmp/rpms/vscode/*.rpm || true
+RUN if [ -n "$(ls -A /tmp/rpms/vscode/*.rpm 2>/dev/null)" ]; then \
+        echo "Installing VS Code from offline repo..."; \
+        dnf -y install /tmp/rpms/vscode/*.rpm || true; \
+    else \
+        echo "Offline VS Code package not found, attempting online install..."; \
+        rpm --import https://packages.microsoft.com/keys/microsoft.asc || true; \
+        sh -c 'echo -e "[code]\nname=Visual Studio Code\nbaseurl=https://packages.microsoft.com/yumrepos/vscode\nenabled=1\ngpgcheck=1\ngpgkey=https://packages.microsoft.com/keys/microsoft.asc" > /etc/yum.repos.d/vscode.repo' || true; \
+        dnf -y install code || true; \
+    fi
 
-# Install WineHQ and Bottles
+# Install WineHQ (offline preferred, online fallback)
 COPY offline-repo/winehq/ /tmp/rpms/winehq/
-RUN dnf -y install /tmp/rpms/winehq/*.rpm || true
+RUN if [ -n "$(ls -A /tmp/rpms/winehq/*.rpm 2>/dev/null)" ]; then \
+        echo "Installing WineHQ from offline repo..."; \
+        dnf -y install /tmp/rpms/winehq/*.rpm || true; \
+    else \
+        echo "Offline WineHQ packages not found, attempting online install..."; \
+        dnf -y install dnf-plugins-core || true; \
+        dnf config-manager --add-repo https://dl.winehq.org/wine-builds/fedora/$(rpm -E %fedora)/winehq.repo || true; \
+        dnf -y install winehq-stable || true; \
+    fi
 
-# Install Docker Desktop
+# Install Docker Desktop (offline preferred, online fallback)
 COPY offline-repo/docker-desktop/ /tmp/rpms/docker-desktop/
-# Install Docker Desktop RPM offline; skip online repo if network unavailable
-RUN dnf -y install dnf-plugins-core || true && \
-    (curl -fsSL https://download.docker.com/linux/fedora/docker-ce.repo -o /etc/yum.repos.d/docker-ce.repo && \
-     dnf -y install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin || true) || true && \
-    dnf -y install /tmp/rpms/docker-desktop/*.rpm || true
+RUN if [ -n "$(ls -A /tmp/rpms/docker-desktop/*.rpm 2>/dev/null)" ]; then \
+        echo "Installing Docker Desktop from offline repo..."; \
+        dnf -y install dnf-plugins-core || true; \
+        (curl -fsSL https://download.docker.com/linux/fedora/docker-ce.repo -o /etc/yum.repos.d/docker-ce.repo && \
+         dnf -y install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin || true) || true; \
+        dnf -y install /tmp/rpms/docker-desktop/*.rpm || true; \
+    else \
+        echo "Offline Docker Desktop package not found, attempting online install..."; \
+        dnf -y install dnf-plugins-core || true; \
+        curl -fsSL https://download.docker.com/linux/fedora/docker-ce.repo -o /etc/yum.repos.d/docker-ce.repo || true; \
+        dnf -y install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin || true; \
+        curl -fsSL "https://desktop.docker.com/linux/main/amd64/docker-desktop-x86_64.rpm" -o /tmp/docker-desktop.rpm || true; \
+        dnf -y install /tmp/docker-desktop.rpm || true; \
+        rm -f /tmp/docker-desktop.rpm; \
+    fi
 
 # Clean up RPM temp directory
 RUN rm -rf /tmp/rpms

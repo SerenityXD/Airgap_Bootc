@@ -9,33 +9,97 @@ This pivot avoids Anaconda+distro repos during install by embedding a prebuilt b
 - Offline cache: local OCI registry (directory) or tarball containing the system image
 
 ## Flow
-1. Build system image (online machine)
-2. Export image to an offline artifact (directory or tarball)
-3. Compose installer ISO embedding that image
-4. Transfer ISO to air-gapped environment and install
+1. (Optional) Fetch offline RPMs for third-party packages
+2. Build system image (online machine)
+3. Export image to an offline artifact (directory or tarball)
+4. Compose installer ISO embedding that image
+5. Transfer ISO to air-gapped environment and install
+
+## Fetching Offline Packages
+
+Before building, download third-party RPMs on an internet-connected machine:
+
+```bash
+# Fetch all packages (RPM Fusion, NVIDIA, VS Code, WineHQ, Docker Desktop)
+./fetch_offline_rpms.sh --all
+
+# Fetch specific packages only
+./fetch_offline_rpms.sh --vscode --docker-desktop --nvidia
+
+# Skip downloads if files already exist
+./fetch_offline_rpms.sh --all --skip-existing
+```
+
+Packages are saved to `image/offline-repo/<vendor>/` and automatically included during build.
+
+**Note:** If offline packages are not fetched, the Containerfile will automatically fall back to online installation during build.
+
+### Known Package Conflicts
+
+Some packages may fail to download on systems with conflicting packages already installed:
+
+**RPM Fusion**: Conflicts with `ffmpeg-free`
+```bash
+# Workaround: temporarily remove conflict
+sudo dnf remove -y ffmpeg-free
+./fetch_offline_rpms.sh --rpmfusion
+sudo dnf install -y ffmpeg-free  # Reinstall if needed
+```
+
+**WineHQ**: Conflicts with `wine-desktop`
+```bash
+# Workaround: temporarily remove conflict
+sudo dnf remove -y wine-desktop
+./fetch_offline_rpms.sh --winehq
+sudo dnf install -y wine-desktop  # Reinstall if needed
+```
+
+**Alternative:** Run the fetch script on a minimal Fedora system without these packages, or skip offline fetching and use online fallback.
 
 ## Build, Export, and Convert to ISO
 
 ### Scripted Build (recommended)
-- Run everything in one command using the helper script. It cleans the output folder, builds the image, exports to OCI, loads it into rootful Podman, creates the ISO, and verifies the result.
 
+The build script can automatically fetch offline packages before building, or use online fallback during the build.
+
+**Basic build (online fallback):**
 ```bash
 /home/$USER/Documents/Bootc_Test/bootc_ostree/build_export_iso.sh
 ```
 
-- Optional overrides via env vars or flags:
+**Build with automatic offline package fetching:**
+```bash
+# Fetch all packages automatically
+/home/$USER/Documents/Bootc_Test/bootc_ostree/build_export_iso.sh --fetch-offline
+
+# Fetch specific packages only
+/home/$USER/Documents/Bootc_Test/bootc_ostree/build_export_iso.sh \
+  --fetch-offline \
+  --packages vscode,nvidia,docker-desktop
+```
+
+**Advanced usage with environment variables:**
 
 ```bash
 TAG=localhost/scvu-bootc:kde \
 OUTPUT_DIR=/home/$USER/Documents/Bootc_Test/bootc_ostree/output \
 OCI_PATH=/home/$USER/Documents/Bootc_Test/bootc_ostree/oci-image/scvu-bootc-kde.oci \
 ROOTFS=btrfs \
+FETCH_OFFLINE=true \
+FETCH_PACKAGES=all \
 /home/$USER/Documents/Bootc_Test/bootc_ostree/build_export_iso.sh
 
-# or flags
+# or using flags
 /home/$USER/Documents/Bootc_Test/bootc_ostree/build_export_iso.sh \
 	--tag localhost/scvu-bootc:kde \
 	--image-dir /home/$USER/Documents/Bootc_Test/bootc_ostree/image \
+	--oci-path /home/$USER/Documents/Bootc_Test/bootc_ostree/oci-image/scvu-bootc-kde.oci \
+	--output-dir /home/$USER/Documents/Bootc_Test/bootc_ostree/output \
+	--rootfs btrfs \
+	--fetch-offline \
+	--packages all \
+	--skip-existing
+```
 	--oci-path /home/$USER/Documents/Bootc_Test/bootc_ostree/oci-image/scvu-bootc-kde.oci \
 	--output-dir /home/$USER/Documents/Bootc_Test/bootc_ostree/output \
 	--rootfs btrfs
@@ -131,6 +195,7 @@ This will:
 - If air-gapped, skip online repo steps; use offline RPMs under `image/` subfolders.
 
 Third-party RPMs integration:
-- Place offline RPMs under `bootc_ostree/image/offline-repo/` subfolders: `rpmfusion/`, `nvidia/`, `vscode/`, `winehq/`, `docker-desktop/`
+- **Automated:** Run `./fetch_offline_rpms.sh --all` to download packages
+- **Manual:** Place offline RPMs under `bootc_ostree/image/offline-repo/` subfolders: `rpmfusion/`, `nvidia/`, `vscode/`, `winehq/`, `docker-desktop/`
 - VS Code extensions: put `.vsix` files in `bootc_ostree/image/vscode-extensions/`
 - The `Containerfile` copies and installs these if present during build
