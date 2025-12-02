@@ -70,10 +70,45 @@ This will:
 - Rebuild initramfs if NVIDIA drivers are present
 - Ensure the current user is in the `docker` group
 
+## Burning ISO to USB
+
+**Important:** Do NOT use Fedora Media Writer. Bootc ISOs use OSTree deployment and require different tools.
+
+### Option 1: dd (Linux/Mac, Recommended)
+```bash
+# Find your USB device
+lsblk
+
+# Write the ISO (replace /dev/sdX with your USB device)
+sudo dd if=/home/$USER/Documents/Bootc_Test/bootc_ostree/output/bootiso/install.iso \
+    of=/dev/sdX \
+    bs=4M \
+    status=progress \
+    oflag=sync
+```
+
+### Option 2: Ventoy (Multi-boot USB)
+1. Install Ventoy on your USB drive: https://www.ventoy.net
+2. Copy the ISO to the Ventoy partition
+3. Boot from USB and select the ISO from Ventoy menu
+
+### Option 3: Balena Etcher (Cross-platform GUI)
+1. Download from: https://etcher.balena.io
+2. Select the ISO file
+3. Select target USB drive
+4. Click "Flash!"
+
+### Option 4: Rufus (Windows)
+1. Download from: https://rufus.ie
+2. Select the ISO
+3. **Important:** Choose "DD Image" mode (not "ISO mode")
+4. Write to USB
+
 ## Notes
 
-- NVIDIA: Bare‑metal GPU support may require akmods packages and Secure Boot considerations. VM environments won’t expose `nvidia-smi` without a passthrough GPU.
+- NVIDIA: Bare‑metal GPU support may require akmods packages and Secure Boot considerations. VM environments won't expose `nvidia-smi` without a passthrough GPU.
 - Air‑gapped resilience: Third‑party RPMs (RPM Fusion, NVIDIA, VS Code, WineHQ, Docker Desktop) can be supplied offline under `bootc_ostree/image/offline-repo/` subfolders. The build guards online fetches when air‑gapped.
+- Bootc ISOs are not compatible with Fedora Media Writer due to OSTree deployment structure.
 
 ## Documentation
 

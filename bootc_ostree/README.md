@@ -79,8 +79,35 @@ ls -lh /home/$USER/Documents/Bootc_Test/bootc_ostree/output/bootiso/install.iso
 file /home/$USER/Documents/Bootc_Test/bootc_ostree/output/bootiso/install.iso
 ```
 
+## Creating Bootable USB
+
+**Important:** Do NOT use Fedora Media Writer. Use one of these methods:
+
+### Method 1: dd (Linux/Mac)
+```bash
+# Find your USB device
+lsblk
+
+# Write ISO to USB (replace /dev/sdX)
+sudo dd if=/home/$USER/Documents/Bootc_Test/bootc_ostree/output/bootiso/install.iso \
+    of=/dev/sdX bs=4M status=progress oflag=sync
+```
+
+### Method 2: Ventoy
+- Install Ventoy on USB: https://www.ventoy.net
+- Copy ISO to Ventoy partition
+- Boot and select from menu
+
+### Method 3: Balena Etcher (GUI)
+- Download: https://etcher.balena.io
+- Select ISO, select USB, flash
+
+### Method 4: Rufus (Windows)
+- Use "DD Image" mode (not "ISO mode")
+- https://rufus.ie
+
 ## Air-gapped Install
-- Boot the ISO
+- Boot the USB/ISO
 - The installer provisions the embedded image (no network, no repos)
 - First boot runs systemd units to finalize setup
 
