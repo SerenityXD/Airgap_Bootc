@@ -185,6 +185,19 @@ This will:
 - Rebuild initramfs if NVIDIA drivers are present
 - Ensure current user is in the `docker` group
 
+## Dual Boot & Manual Partitioning Workaround
+
+Bootc/ostree ISOs do not provide a graphical/manual partitioning option during installation. To dual boot with Windows or customize partitions:
+
+**Workaround:**
+1. Shrink your Windows partition and create a new empty partition for Linux _before_ running the installer.
+   - In Windows: Use Disk Management to shrink the main partition and leave unallocated space.
+   - Or use a live USB with GParted to resize and create a new partition.
+2. Boot from the bootc/ostree ISO and run the installer. It will typically use the largest available unallocated space for installation.
+3. After install, GRUB should detect both Windows and Linux for dual boot.
+
+**Note:** Always back up your data before resizing partitions. If BitLocker is enabled, suspend it before making changes.
+
 ## Notes
 - You can keep separate variants (KDE, NVIDIA/CUDA, Docker Desktop, VS Code) via Dockerfiles and tags
 - For updates, rebuild image online and recompose ISO

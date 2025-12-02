@@ -196,12 +196,6 @@ fetch_vscode() {
         code.x86_64 \
         || log_error "Failed to download VS Code"
     
-    # Rename to consistent name
-    if ls code-*.rpm &>/dev/null; then
-        latest=$(ls -t code-*.rpm | head -1)
-        ln -sf "$latest" code-latest.rpm
-    fi
-    
     log_info "VS Code saved to: $target_dir"
 }
 

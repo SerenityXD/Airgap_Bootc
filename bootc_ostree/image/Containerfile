@@ -107,20 +107,34 @@ RUN if [ -n "$(ls -A /tmp/rpms/rpmfusion/*.rpm 2>/dev/null)" ]; then \
 COPY offline-repo/nvidia/ /tmp/rpms/nvidia/
 RUN if [ -n "$(ls -A /tmp/rpms/nvidia/*.rpm 2>/dev/null)" ]; then \
         echo "Installing NVIDIA drivers from offline repo..."; \
-        dnf -y install /tmp/rpms/nvidia/*.rpm || true; \
+        dnf -y install \
+            --exclude=qt6-qtbase* \
+            --exclude=OpenCL-ICD-Loader* \
+            --exclude=ocl-icd* \
+            --nodeps \
+            /tmp/rpms/nvidia/akmod-nvidia-*.rpm \
+            /tmp/rpms/nvidia/kmod-nvidia-*.rpm \
+            /tmp/rpms/nvidia/*xorg-x11-drv-nvidia-*.rpm \
+            /tmp/rpms/nvidia/nvidia-settings-*.rpm \
+            /tmp/rpms/nvidia/nvidia-libXNVCtrl-*.rpm 2>/dev/null || true; \
+        echo "Installing NVIDIA core packages with dependencies..."; \
+        dnf -y install --best --skip-broken \
+            /tmp/rpms/nvidia/akmod-nvidia-*.rpm \
+            /tmp/rpms/nvidia/*xorg-x11-drv-nvidia-[0-9]*.rpm \
+            /tmp/rpms/nvidia/nvidia-settings-*.rpm 2>/dev/null || true; \
     else \
         echo "Offline NVIDIA packages not found, attempting online install..."; \
         dnf -y install \
             https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm || true; \
-        dnf -y install akmod-nvidia xorg-x11-drv-nvidia \
+        dnf -y install --best --skip-broken akmod-nvidia xorg-x11-drv-nvidia \
             xorg-x11-drv-nvidia-cuda nvidia-settings || true; \
     fi
 
 # Install VS Code (offline preferred, online fallback)
 COPY offline-repo/vscode/ /tmp/rpms/vscode/
-RUN if [ -n "$(ls -A /tmp/rpms/vscode/*.rpm 2>/dev/null)" ]; then \
+RUN if [ -n "$(find /tmp/rpms/vscode/ -maxdepth 1 -type f -name '*.rpm' 2>/dev/null)" ]; then \
         echo "Installing VS Code from offline repo..."; \
-        dnf -y install /tmp/rpms/vscode/*.rpm || true; \
+        find /tmp/rpms/vscode/ -maxdepth 1 -type f -name 'code-*.rpm' -exec dnf -y install {} \; || true; \
     else \
         echo "Offline VS Code package not found, attempting online install..."; \
         rpm --import https://packages.microsoft.com/keys/microsoft.asc || true; \

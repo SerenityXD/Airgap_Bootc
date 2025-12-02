@@ -2,6 +2,9 @@
 # Build image -> export OCI -> load into rootful -> create ISO -> verify
 set -euo pipefail
 
+# Start timer
+BUILD_START_TIME=$(date +%s)
+
 # Config (override via env or flags)
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 IMAGE_DIR="$ROOT_DIR/image"
@@ -68,11 +71,18 @@ while [[ ${1:-} ]]; do
 done
 
 summary() {
+  local BUILD_END_TIME=$(date +%s)
+  local BUILD_DURATION=$((BUILD_END_TIME - BUILD_START_TIME))
+  local HOURS=$((BUILD_DURATION / 3600))
+  local MINUTES=$(((BUILD_DURATION % 3600) / 60))
+  local SECONDS=$((BUILD_DURATION % 60))
+  
   echo ""
   echo "== Summary =="
   echo "Image tag:        $TAG"
   echo "OCI archive:      $OCI_PATH"
   echo "Output directory: $OUTPUT_DIR"
+  printf "Build time:       %02d:%02d:%02d\n" $HOURS $MINUTES $SECONDS
   if [[ -n "${ISO_PATH:-}" && -f "$ISO_PATH" ]]; then
     ls -lh "$ISO_PATH" || true
     file "$ISO_PATH" || true
@@ -134,24 +144,36 @@ fi
 
 # 1) Build image (rootless)
 echo "[1/4] Building image $TAG from $IMAGE_DIR ..."
+STEP_START=$(date +%s)
 TMPDIR="$TMPDIR" podman build --pull=always -t "$TAG" "$IMAGE_DIR"
+STEP_END=$(date +%s)
+echo "[1/4] Build completed in $((STEP_END - STEP_START))s"
 
 echo "[2/4] Saving OCI archive to $OCI_PATH ..."
+STEP_START=$(date +%s)
 podman save --format oci-archive -o "$OCI_PATH" "$TAG"
+STEP_END=$(date +%s)
+echo "[2/4] OCI save completed in $((STEP_END - STEP_START))s"
 
 # 3) Load into rootful
 echo "[3/4] Loading image into rootful Podman ..."
+STEP_START=$(date +%s)
 sudo podman load -i "$OCI_PATH"
 sudo podman images | grep -E "^$TAG[[:space:]]" || true
+STEP_END=$(date +%s)
+echo "[3/4] Rootful load completed in $((STEP_END - STEP_START))s"
 
 # 4) Build ISO with bootc-image-builder
 echo "[4/4] Creating ISO via $BUILDER_IMG ..."
+STEP_START=$(date +%s)
 sudo podman run --rm -it --privileged \
   --security-opt label=type:unconfined_t \
   -v "$OUTPUT_DIR:/output" \
   -v /var/lib/containers/storage:/var/lib/containers/storage:rw \
   "$BUILDER_IMG" \
   --type iso --rootfs "$ROOTFS" "$TAG" | tee "$OUTPUT_DIR/iso-build.log"
+STEP_END=$(date +%s)
+echo "[4/4] ISO creation completed in $((STEP_END - STEP_START))s"
 
 # Verify ISO path (single bootiso first, fallback to double)
 CANDIDATE1="$OUTPUT_DIR/bootiso/install.iso"
