@@ -29,7 +29,7 @@ RUN dnf -y install \
     network-manager-applet \
     kernel-devel kernel-modules-extra \
     # Container tools
-    slirp4netns conntrack-tools bridge-utils \
+    slirp4netns conntrack-tools bridge-utils fuse-overlayfs podman \
     # Remote desktop
     xrdp xorgxrdp \
     && dnf -y clean all && rm -rf /var/cache/dnf

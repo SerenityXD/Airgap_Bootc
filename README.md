@@ -17,6 +17,8 @@ We previously attempted an Anaconda/kickstart flow, but pivoted to bootc/ostree 
 - [Build Pipeline Overview](#build-pipeline-overview)
 - [Artifacts and Disk Usage](#artifacts-and-disk-usage)
 - [Post-Install](#post-install)
+- [Updating](#updating)
+  - [Offline Update Options](#offline-update-options)
 - [Burning ISO to USB](#burning-iso-to-usb)
   - [Option 1: dd (Linux/Mac)](#option-1-dd-linuxmac-recommended)
   - [Option 2: Ventoy](#option-2-ventoy-multi-boot-usb)
@@ -217,6 +219,57 @@ This will:
 - Enable SDDM and XRDP; set default to graphical target
 - Rebuild initramfs if NVIDIA drivers are present
 - Ensure the current user is in the `docker` group
+
+## Updating
+
+bootc deployments support safe, atomic updates and rollbacks.
+
+- Check current status:
+  ```bash
+  bootc status
+  ```
+- Pull latest image and stage an update (for the current image reference):
+  ```bash
+  sudo bootc upgrade
+  sudo reboot
+  ```
+- Switch to a different image reference (e.g., a new tag you built):
+  ```bash
+  sudo bootc switch localhost/scvu-bootc:kde
+  sudo reboot
+  ```
+- Roll back if needed:
+  ```bash
+  sudo bootc rollback
+  sudo reboot
+  ```
+
+### Offline Update Options
+
+You can update machines without internet access by delivering the new image offline.
+
+- Option A: OCI archive (tar) + rootful load
+  ```bash
+  # On a connected machine, produce an OCI archive of the new image
+  podman save --format oci-archive -o scvu-bootc-kde.oci localhost/scvu-bootc:kde
+
+  # Transfer scvu-bootc-kde.oci to the target (USB, etc.)
+
+  # On the target (offline), load into rootful storage
+  sudo podman load -i scvu-bootc-kde.oci
+
+  # Switch the system to the loaded image reference
+  sudo bootc switch localhost/scvu-bootc:kde
+  sudo reboot
+  ```
+
+- Option B: Rebuild ISO and reinstall/provision
+  - Build a new ISO from this repo with updated `Containerfile` contents
+  - Install fresh on new machines, or use for reprovision where appropriate
+
+Notes:
+- User data in `/home` and service state in `/var` persist across updates; `/usr` comes from the image.
+- Ensure third‑party offline RPMs match the base Fedora version (43) used by the image to avoid dependency conflicts.
 
 ## Burning ISO to USB
 
