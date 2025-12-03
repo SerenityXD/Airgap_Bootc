@@ -86,7 +86,7 @@ RUN dnf -y install \
     && dnf -y clean all && rm -rf /var/cache/dnf
 
 # Create directories for third-party packages
-RUN mkdir -p /tmp/rpms/{nvidia,vscode,rpmfusion,winehq,docker-desktop}
+RUN mkdir -p /tmp/rpms/{nvidia,vscode,rpmfusion,winehq,docker-desktop,drawio}
 
 # Install RPM Fusion packages (offline preferred, online fallback)
 COPY offline-repo/rpmfusion/ /tmp/rpms/rpmfusion/
@@ -172,6 +172,15 @@ RUN if [ -n "$(ls -A /tmp/rpms/docker-desktop/*.rpm 2>/dev/null)" ]; then \
         rm -f /tmp/docker-desktop.rpm; \
     fi
 
+# Install draw.io (offline preferred, online fallback)
+COPY offline-repo/drawio/ /tmp/rpms/drawio/
+RUN if [ -n "$(ls -A /tmp/rpms/drawio/*.rpm 2>/dev/null)" ]; then \
+        echo "Installing draw.io from offline repo..."; \
+        dnf -y install /tmp/rpms/drawio/*.rpm || true; \
+    else \
+        echo "Offline draw.io package not found, skipping (not in Fedora repos)..."; \
+    fi
+
 # Clean up RPM temp directory
 RUN rm -rf /tmp/rpms
 
@@ -200,6 +209,101 @@ npm install -g create-react-app @vue/cli @angular/cli create-next-app \
 echo "JavaScript frameworks installed"
 EOF
 RUN chmod +x /usr/local/bin/install-js-frameworks.sh
+
+# Create OpenShift/Kubernetes CLI installer
+RUN cat > /usr/local/bin/install-openshift-tools.sh <<'EOF'
+#!/bin/bash
+# Install OpenShift and Kubernetes CLI tools
+# These are not available in Fedora repos and require manual download
+set -e
+
+OC_VERSION="latest"  # or specify version like "4.14.0"
+KUBECTL_VERSION="$(curl -L -s https://dl.k8s.io/release/stable.txt 2>/dev/null || echo 'v1.29.0')"
+INSTALL_DIR="/usr/local/bin"
+
+echo "======================================"
+echo "OpenShift/Kubernetes CLI Installation"
+echo "======================================"
+echo ""
+
+# Install oc (OpenShift CLI)
+if ! command -v oc &> /dev/null; then
+    echo "Installing oc (OpenShift CLI)..."
+    cd /tmp
+    if [ "$OC_VERSION" = "latest" ]; then
+        OC_URL="https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz"
+    else
+        OC_URL="https://mirror.openshift.com/pub/openshift-v4/clients/ocp/${OC_VERSION}/openshift-client-linux.tar.gz"
+    fi
+    
+    if curl -fL "$OC_URL" -o oc.tar.gz; then
+        tar -xzf oc.tar.gz oc kubectl
+        mv oc "$INSTALL_DIR/"
+        [ -f kubectl ] && mv kubectl "$INSTALL_DIR/"
+        chmod +x "$INSTALL_DIR/oc" "$INSTALL_DIR/kubectl" 2>/dev/null || true
+        rm -f oc.tar.gz README.md
+        echo "✓ oc installed: $(oc version --client 2>/dev/null | head -1)"
+    else
+        echo "✗ Failed to download oc. Check internet connection or try manual download from:"
+        echo "  https://mirror.openshift.com/pub/openshift-v4/clients/ocp/"
+    fi
+else
+    echo "✓ oc already installed: $(oc version --client 2>/dev/null | head -1)"
+fi
+
+# Install kubectl if not already present (oc bundle includes it)
+if ! command -v kubectl &> /dev/null; then
+    echo "Installing kubectl..."
+    cd /tmp
+    if curl -fLO "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"; then
+        chmod +x kubectl
+        mv kubectl "$INSTALL_DIR/"
+        echo "✓ kubectl installed: $(kubectl version --client 2>/dev/null | head -1)"
+    else
+        echo "✗ Failed to download kubectl. Check internet connection."
+    fi
+else
+    echo "✓ kubectl already installed: $(kubectl version --client 2>/dev/null | head -1)"
+fi
+
+echo ""
+echo "======================================"
+echo "Installation Complete"
+echo "======================================"
+echo ""
+echo "Verify installation:"
+echo "  oc version --client"
+echo "  kubectl version --client"
+echo ""
+echo "Connect to a cluster:"
+echo "  oc login https://api.your-cluster.com:6443"
+echo "  kubectl config use-context your-context"
+echo ""
+EOF
+RUN chmod +x /usr/local/bin/install-openshift-tools.sh
+
+# Install OpenShift/Kubernetes CLI tools from offline cache (if present)
+COPY offline-repo/openshift/ /tmp/openshift/
+RUN if [ -f /tmp/openshift/oc ]; then \
+        echo "Installing oc from offline cache..."; \
+        install -m 0755 /tmp/openshift/oc /usr/local/bin/oc; \
+        echo "✓ oc installed from offline cache"; \
+    fi && \
+    if [ -f /tmp/openshift/kubectl ]; then \
+        echo "Installing kubectl from offline cache..."; \
+        install -m 0755 /tmp/openshift/kubectl /usr/local/bin/kubectl; \
+        echo "✓ kubectl installed from offline cache"; \
+    fi && \
+    rm -rf /tmp/openshift
+
+# Install CodeReady Containers (CRC) from offline cache (if present)
+COPY offline-repo/crc/ /tmp/crc/
+RUN if [ -f /tmp/crc/crc ]; then \
+        echo "Installing CRC from offline cache..."; \
+        install -m 0755 /tmp/crc/crc /usr/local/bin/crc; \
+        echo "✓ CRC installed from offline cache: $(crc version 2>/dev/null | head -1 || echo 'version check skipped')"; \
+    fi && \
+    rm -rf /tmp/crc
 
 # Create consolidated post-install script
 RUN cat > /usr/local/bin/scvu-post-install.sh <<'EOF'

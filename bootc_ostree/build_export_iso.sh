@@ -5,6 +5,26 @@ set -euo pipefail
 # Start timer
 BUILD_START_TIME=$(date +%s)
 
+# Validate sudo access early and start keep-alive
+echo "Checking sudo access..."
+if ! sudo -n true 2>/dev/null; then
+    echo "This script requires sudo access for rootful Podman operations."
+    echo "You may be prompted for your password."
+    sudo -v
+fi
+
+# Start sudo keep-alive in background
+# Refreshes sudo timestamp every 60 seconds until this script exits
+(
+    while true; do
+        sudo -n true
+        sleep 60
+        kill -0 "$$" 2>/dev/null || exit
+    done
+) &
+SUDO_KEEPALIVE_PID=$!
+trap "kill $SUDO_KEEPALIVE_PID 2>/dev/null || true" EXIT
+
 # Config (override via env or flags)
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 IMAGE_DIR="$ROOT_DIR/image"

@@ -17,22 +17,44 @@ This pivot avoids Anaconda+distro repos during install by embedding a prebuilt b
 
 ## Fetching Offline Packages
 
-Before building, download third-party RPMs on an internet-connected machine:
+Before building, download third-party packages on an internet-connected machine.
+
+### All-in-One Fetch (Recommended)
 
 ```bash
-# Fetch all packages (RPM Fusion, NVIDIA, VS Code, WineHQ, Docker Desktop)
-./fetch_offline_rpms.sh --all
+# Fetch everything: RPMs, draw.io, OpenShift tools, CRC
+./fetch_all_offline.sh
+```
 
-# Fetch specific packages only
-./fetch_offline_rpms.sh --vscode --docker-desktop --nvidia
+This master script runs all individual fetch scripts and provides a summary.
+
+### Individual Fetch Scripts
+
+All individual fetch scripts are in the `fetch-scripts/` subdirectory:
+
+```bash
+# Fetch RPM packages (RPM Fusion, NVIDIA, VS Code, WineHQ, Docker Desktop)
+./fetch-scripts/fetch_offline_rpms.sh --all
+
+# Fetch draw.io (diagrams.net)
+./fetch-scripts/fetch_drawio.sh
+
+# Fetch OpenShift/Kubernetes CLI tools (oc, kubectl)
+./fetch-scripts/fetch_openshift_tools.sh
+
+# Fetch CodeReady Containers (CRC)
+./fetch-scripts/fetch_crc.sh
+
+# Fetch specific RPM packages only
+./fetch-scripts/fetch_offline_rpms.sh --vscode --docker-desktop --nvidia
 
 # Skip downloads if files already exist
-./fetch_offline_rpms.sh --all --skip-existing
+./fetch-scripts/fetch_offline_rpms.sh --all --skip-existing
 ```
 
 Packages are saved to `image/offline-repo/<vendor>/` and automatically included during build.
 
-**Note:** If offline packages are not fetched, the Containerfile will automatically fall back to online installation during build.
+**Note:** If offline packages are not fetched, the Containerfile will automatically fall back to online installation during build (where available).
 
 ### Known Package Conflicts
 
@@ -60,16 +82,25 @@ sudo dnf install -y wine-desktop  # Reinstall if needed
 
 ### Scripted Build (recommended)
 
-The build script can automatically fetch offline packages before building, or use online fallback during the build.
+The build script validates sudo access once at start and maintains it throughout (no timeouts). It can automatically fetch offline packages before building, or use online fallback during the build.
 
 **Basic build (online fallback):**
 ```bash
 /home/$USER/Documents/Bootc_Test/bootc_ostree/build_export_iso.sh
 ```
 
+**Build with offline packages (recommended workflow):**
+```bash
+# Step 1: Fetch all offline packages
+./fetch_all_offline.sh
+
+# Step 2: Build ISO
+./build_export_iso.sh --iso-name SCVU.iso
+```
+
 **Build with automatic offline package fetching:**
 ```bash
-# Fetch all packages automatically
+# Fetch all packages automatically during build
 /home/$USER/Documents/Bootc_Test/bootc_ostree/build_export_iso.sh --fetch-offline
 
 # Fetch specific packages only

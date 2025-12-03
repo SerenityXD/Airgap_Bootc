@@ -76,9 +76,11 @@ The `build_export_iso.sh` script requires:
 - Multiple Python versions: 3.9–3.13 (with pip)
 - Node.js + npm + yarn
 - VS Code; offline VSIX extensions supported
-- Docker Desktop (offline RPM), docker group handling
+- Container runtimes: Podman (with rootless support), Docker Desktop (offline RPM), docker group handling
+- OpenShift/Kubernetes: oc, kubectl, and CRC (offline binaries supported)
 - WineHQ stable
 - Multimedia: ffmpeg, mpv, OBS, codec packs (RPM Fusion)
+- Office & diagramming: LibreOffice, draw.io (offline RPM)
 - Filesystems: NTFS, exFAT, Btrfs, ext4, XFS, F2FS
 - Remote access: xrdp
 - Users: IAC (admin) and AIBUser (standard), both in `docker`
@@ -87,20 +89,31 @@ Exact contents are defined in `bootc_ostree/image/Containerfile` and may vary by
 
 ## Preparing Offline Packages (Optional)
 
-If you want to include third-party packages (RPM Fusion, NVIDIA, VS Code, WineHQ, Docker Desktop), fetch them first on an internet-connected machine:
+If you want to include third-party packages (RPM Fusion, NVIDIA, VS Code, WineHQ, Docker Desktop, draw.io, OpenShift/Kubernetes tools), fetch them first on an internet-connected machine:
 
 ```bash
-# Fetch all packages
-/home/$USER/Documents/Bootc_Test/bootc_ostree/fetch_offline_rpms.sh --all
+# RECOMMENDED: Fetch everything with one command
+/home/$USER/Documents/Bootc_Test/bootc_ostree/fetch_all_offline.sh
 
-# Or fetch specific packages
-/home/$USER/Documents/Bootc_Test/bootc_ostree/fetch_offline_rpms.sh --vscode --docker-desktop
+# Or fetch individually (scripts are in fetch-scripts/ subdirectory):
+/home/$USER/Documents/Bootc_Test/bootc_ostree/fetch-scripts/fetch_offline_rpms.sh --all
+/home/$USER/Documents/Bootc_Test/bootc_ostree/fetch-scripts/fetch_drawio.sh
+/home/$USER/Documents/Bootc_Test/bootc_ostree/fetch-scripts/fetch_openshift_tools.sh
+/home/$USER/Documents/Bootc_Test/bootc_ostree/fetch-scripts/fetch_crc.sh
 
-# Skip if already downloaded
-/home/$USER/Documents/Bootc_Test/bootc_ostree/fetch_offline_rpms.sh --all --skip-existing
+# Or fetch specific RPM packages only
+/home/$USER/Documents/Bootc_Test/bootc_ostree/fetch-scripts/fetch_offline_rpms.sh --vscode --docker-desktop
 ```
 
-Packages will be saved to `bootc_ostree/image/offline-repo/<vendor>/` and automatically included in the build.
+Packages will be saved to:
+- RPMs: `bootc_ostree/image/offline-repo/<vendor>/`
+- draw.io: `bootc_ostree/image/offline-repo/drawio/`
+- OpenShift tools: `bootc_ostree/image/offline-repo/openshift/`
+- CRC binary: `bootc_ostree/image/offline-repo/crc/`
+
+All will be automatically included in the build.
+
+**Note about CRC:** The CRC binary (~60 MB) can be included offline, but the OpenShift bundle (~9 GB) requires internet on first `crc start` OR manual pre-staging. See Post-Install section for details.
 
 **Important:** The fetch script downloads packages for Fedora 43 by default (matching the bootc base image). If you're using a different base image version, set `FEDORA_VERSION` environment variable:
 ```bash
@@ -142,16 +155,16 @@ Use the helper script to build the image, export an OCI archive, load it into ro
 /home/$USER/Documents/Bootc_Test/bootc_ostree/build_export_iso.sh
 ```
 
-**Build with automatic offline package fetching:**
+**Build with offline packages (recommended for air-gapped installs):**
 ```bash
-# Fetch all packages before building
-/home/$USER/Documents/Bootc_Test/bootc_ostree/build_export_iso.sh --fetch-offline
+# Step 1: Fetch all offline packages (one command)
+/home/$USER/Documents/Bootc_Test/bootc_ostree/fetch_all_offline.sh
 
-# Fetch specific packages only
-/home/$USER/Documents/Bootc_Test/bootc_ostree/build_export_iso.sh --fetch-offline --packages vscode,nvidia,docker-desktop
-
-# Build with custom ISO name
+# Step 2: Build with custom ISO name
 /home/$USER/Documents/Bootc_Test/bootc_ostree/build_export_iso.sh --iso-name SCVU.iso
+
+# Or use automatic fetch during build
+/home/$USER/Documents/Bootc_Test/bootc_ostree/build_export_iso.sh --fetch-offline --iso-name SCVU.iso
 ```
 
 **Advanced options:**
@@ -188,15 +201,18 @@ Manual step‑by‑step commands and notes are in `bootc_ostree/README.md`.
 
 ## Build Pipeline Overview
 
-0) (Optional) Fetch offline packages if `--fetch-offline` is specified
-1) Build the bootc system image via Podman (with build time tracking)
-2) Export to an OCI archive (rootless → rootful bridge)
-3) Load into rootful Podman
-4) Use `bootc-image-builder` to compose an installer ISO (Btrfs rootfs)
-5) Verify ISO under `bootc_ostree/output/bootiso/install.iso`
-6) (Optional) Rename ISO if `--iso-name` is specified
+0) Validate sudo access and start keep-alive (refreshes every 60s during build)
+1) (Optional) Fetch offline packages if `--fetch-offline` is specified
+2) Build the bootc system image via Podman (with build time tracking)
+3) Export to an OCI archive (rootless → rootful bridge)
+4) Load into rootful Podman
+5) Use `bootc-image-builder` to compose an installer ISO (Btrfs rootfs)
+6) Verify ISO under `bootc_ostree/output/bootiso/install.iso`
+7) (Optional) Rename ISO if `--iso-name` is specified
 
-The build script displays elapsed time for each step and total build duration in HH:MM:SS format.
+The build script:
+- Requests sudo password once at start, then maintains access throughout (no timeout)
+- Displays elapsed time for each step and total build duration in HH:MM:SS format
 
 ## Artifacts and Disk Usage
 
@@ -219,6 +235,73 @@ This will:
 - Enable SDDM and XRDP; set default to graphical target
 - Rebuild initramfs if NVIDIA drivers are present
 - Ensure the current user is in the `docker` group
+
+### Using OpenShift/Kubernetes Tools
+
+If you pre-downloaded the binaries with `fetch_openshift_tools.sh`, `oc` and `kubectl` are already installed.
+
+Verify:
+```bash
+oc version --client
+kubectl version --client
+```
+
+Connect to clusters:
+```bash
+# OpenShift
+oc login https://api.your-cluster.com:6443
+
+# Kubernetes
+kubectl config use-context your-context
+```
+
+If you didn't pre-download and have internet access, install them post-boot:
+```bash
+sudo /usr/local/bin/install-openshift-tools.sh
+```
+
+### Using CodeReady Containers (CRC)
+
+If you pre-downloaded the CRC binary with `fetch_crc.sh`, it's already installed at `/usr/local/bin/crc`.
+
+**Requirements:**
+- Red Hat pull secret from https://cloud.redhat.com/openshift/create/local
+- 9 GB RAM minimum (16 GB recommended)
+- 35 GB free disk space
+- Internet connection for OpenShift bundle download (~9 GB) on first start
+
+**Setup and start:**
+```bash
+# One-time setup
+crc setup
+
+# Start CRC (will download bundle on first run if not pre-staged)
+crc start
+# You'll be prompted for your pull secret
+
+# Configure shell
+eval $(crc oc-env)
+
+# Login
+oc login -u developer https://api.crc.testing:6443
+# Password: developer
+
+# Access console
+# https://console-openshift-console.apps-crc.testing
+```
+
+**Fully offline CRC (advanced):**
+To avoid the ~9 GB bundle download on first start:
+1. On internet-connected machine: Run `crc setup && crc start`
+2. Locate bundle: `~/.crc/cache/crc_*.crcbundle`
+3. Transfer bundle to target machine via USB
+4. Place in: `~/.crc/cache/` on target machine
+5. Run `crc start` on target (will use cached bundle)
+
+**Stop CRC when not in use:**
+```bash
+crc stop
+```
 
 ## Updating
 
