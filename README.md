@@ -4,6 +4,36 @@ This repository builds a fully offline, air-gapped installer ISO by embedding a 
 
 We previously attempted an Anaconda/kickstart flow, but pivoted to bootc/ostree for reliability and offline friendliness. The kickstart approach is no longer used.
 
+## Table of Contents
+
+- [Requirements](#requirements)
+  - [Build Machine](#build-machine)
+  - [Script Dependencies](#script-dependencies)
+  - [Target Machine](#target-machine-for-installed-system)
+- [What's Included](#whats-included)
+- [Preparing Offline Packages (Optional)](#preparing-offline-packages-optional)
+  - [Known Package Conflicts](#known-package-conflicts)
+- [Quick Start (Scripted)](#quick-start-scripted)
+- [Build Pipeline Overview](#build-pipeline-overview)
+- [Artifacts and Disk Usage](#artifacts-and-disk-usage)
+- [Post-Install](#post-install)
+- [Burning ISO to USB](#burning-iso-to-usb)
+  - [Option 1: dd (Linux/Mac)](#option-1-dd-linuxmac-recommended)
+  - [Option 2: Ventoy](#option-2-ventoy-multi-boot-usb)
+  - [Option 3: Balena Etcher](#option-3-balena-etcher-cross-platform-gui)
+  - [Option 4: Rufus (Windows)](#option-4-rufus-windows)
+- [Dual Boot & Manual Partitioning](#dual-boot--manual-partitioning)
+  - [Dual Boot with Windows](#dual-boot-with-windows)
+- [Notes](#notes)
+- [Documentation](#documentation)
+- [Windows Support (⚠️ Experimental)](#windows-support-️-experimental)
+  - [Setup WSL2 Build Environment](#setup-wsl2-build-environment)
+  - [Build from WSL2](#build-from-wsl2)
+  - [Access ISO from Windows](#access-iso-from-windows)
+  - [Burn ISO on Windows](#burn-iso-on-windows)
+  - [Known Limitations](#known-limitations)
+- [Support](#support)
+
 ## Requirements
 
 ### Build Machine
@@ -117,6 +147,9 @@ Use the helper script to build the image, export an OCI archive, load it into ro
 
 # Fetch specific packages only
 /home/$USER/Documents/Bootc_Test/bootc_ostree/build_export_iso.sh --fetch-offline --packages vscode,nvidia,docker-desktop
+
+# Build with custom ISO name
+/home/$USER/Documents/Bootc_Test/bootc_ostree/build_export_iso.sh --iso-name SCVU.iso
 ```
 
 **Advanced options:**
@@ -127,6 +160,7 @@ OUTPUT_DIR=/home/$USER/Documents/Bootc_Test/bootc_ostree/output \
 OCI_PATH=/home/$USER/Documents/Bootc_Test/bootc_ostree/oci-image/scvu-bootc-kde.oci \
 ROOTFS=btrfs \
 FETCH_OFFLINE=true \
+ISO_NAME=SCVU.iso \
 /home/$USER/Documents/Bootc_Test/bootc_ostree/build_export_iso.sh
 
 # Using flags
@@ -136,7 +170,8 @@ FETCH_OFFLINE=true \
   --rootfs btrfs \
   --fetch-offline \
   --packages all \
-  --skip-existing
+  --skip-existing \
+  --iso-name SCVU.iso
 ```
 
 **Available options:**
@@ -144,17 +179,22 @@ FETCH_OFFLINE=true \
 - `--packages` or `-p`: Specify which packages to fetch (default: all)
   - Options: `all`, or comma-separated: `vscode,nvidia,docker-desktop,rpmfusion,winehq`
 - `--skip-existing` or `-s`: Skip downloading packages that already exist (default: true)
+- `--iso-name NAME`: Custom filename for the output ISO (default: install.iso)
+  - Note: If sudo password is required, manual commands will be provided for rename
 
 Manual step‑by‑step commands and notes are in `bootc_ostree/README.md`.
 
 ## Build Pipeline Overview
 
 0) (Optional) Fetch offline packages if `--fetch-offline` is specified
-1) Build the bootc system image via Podman
+1) Build the bootc system image via Podman (with build time tracking)
 2) Export to an OCI archive (rootless → rootful bridge)
 3) Load into rootful Podman
 4) Use `bootc-image-builder` to compose an installer ISO (Btrfs rootfs)
 5) Verify ISO under `bootc_ostree/output/bootiso/install.iso`
+6) (Optional) Rename ISO if `--iso-name` is specified
+
+The build script displays elapsed time for each step and total build duration in HH:MM:SS format.
 
 ## Artifacts and Disk Usage
 
@@ -193,6 +233,13 @@ sudo dd if=/home/$USER/Documents/Bootc_Test/bootc_ostree/output/bootiso/install.
     bs=4M \
     status=progress \
     oflag=sync
+
+# Or if you renamed it to SCVU.iso
+sudo dd if=/home/$USER/Documents/Bootc_Test/bootc_ostree/output/bootiso/SCVU.iso \
+    of=/dev/sdX \
+    bs=4M \
+    status=progress \
+    oflag=sync
 ```
 
 ### Option 2: Ventoy (Multi-boot USB)
@@ -212,11 +259,33 @@ sudo dd if=/home/$USER/Documents/Bootc_Test/bootc_ostree/output/bootiso/install.
 3. **Important:** Choose "DD Image" mode (not "ISO mode")
 4. Write to USB
 
+## Dual Boot & Manual Partitioning
+
+**Note:** Bootc/ostree ISOs do not provide a graphical/manual partitioning option during installation.
+
+### Dual Boot with Windows
+
+To install this OS alongside Windows without overwriting it:
+
+1. **Prepare partitions (before installation):**
+   - In Windows: Open Disk Management, shrink the main Windows partition, leave unallocated space
+   - Or use a live USB with GParted to create a new empty partition for Linux
+
+2. **Boot from the bootc/ostree ISO:**
+   - The installer will typically use the largest available unallocated space for installation
+
+3. **After installation:**
+   - GRUB should automatically detect both Windows and Linux for dual boot selection
+
+**⚠️ Important:** Always back up your data before resizing partitions. If BitLocker is enabled on Windows, suspend it before making partition changes.
+
 ## Notes
 
-- NVIDIA: Bare‑metal GPU support may require akmods packages and Secure Boot considerations. VM environments won't expose `nvidia-smi` without a passthrough GPU.
-- Air‑gapped resilience: Third‑party RPMs (RPM Fusion, NVIDIA, VS Code, WineHQ, Docker Desktop) can be supplied offline under `bootc_ostree/image/offline-repo/` subfolders. The build guards online fetches when air‑gapped.
-- Bootc ISOs are not compatible with Fedora Media Writer due to OSTree deployment structure.
+- **Build Time:** Typical build takes 15-20 minutes on modern hardware (varies based on CPU, disk speed, and cached layers)
+- **NVIDIA:** Bare‑metal GPU support may require akmods packages and Secure Boot considerations. VM environments won't expose `nvidia-smi` without a passthrough GPU. The build uses `--exclude` and `--nodeps` flags to prevent NVIDIA packages from downgrading system Qt libraries (which would break KDE).
+- **Air‑gapped resilience:** Third‑party RPMs (RPM Fusion, NVIDIA, VS Code, WineHQ, Docker Desktop) can be supplied offline under `bootc_ostree/image/offline-repo/` subfolders. The build guards online fetches when air‑gapped.
+- **Bootc ISOs:** Not compatible with Fedora Media Writer due to OSTree deployment structure. Use dd, Ventoy, Etcher, or Rufus instead.
+- **Version Matching:** Offline packages must match the bootc base image Fedora version (43 by default). Mismatched versions cause dependency conflicts.
 
 ## Documentation
 
