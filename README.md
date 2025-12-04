@@ -20,11 +20,12 @@ We previously attempted an Anaconda/kickstart flow, but pivoted to bootc/ostree 
 - [Updating](#updating)
   - [Offline Update Options](#offline-update-options)
 - [Burning ISO to USB](#burning-iso-to-usb)
-  - [Option 1: dd (Linux/Mac)](#option-1-dd-linuxmac-recommended)
+  - [Interactive Disk Selection](#interactive-disk-selection)
   - [Option 2: Ventoy](#option-2-ventoy-multi-boot-usb)
   - [Option 3: Balena Etcher](#option-3-balena-etcher-cross-platform-gui)
   - [Option 4: Rufus (Windows)](#option-4-rufus-windows)
 - [Dual Boot & Manual Partitioning](#dual-boot--manual-partitioning)
+  - [Interactive Disk Selection (Recommended for Multi-Drive Systems)](#interactive-disk-selection-recommended-for-multi-drive-systems)
   - [Dual Boot with Windows](#dual-boot-with-windows)
 - [Notes](#notes)
 - [Documentation](#documentation)
@@ -74,6 +75,7 @@ The `build_export_iso.sh` script requires:
 - Desktop: KDE Plasma with SDDM
 - Dev tools: gcc, cmake, git, make, fastfetch
 - Multiple Python versions: 3.9–3.13 (with pip)
+- ML/AI: NumPy, SciPy, pandas, scikit-learn, Jupyter, OpenCV, Triton Inference Server (client + server container)
 - Node.js + npm + yarn
 - VS Code; offline VSIX extensions supported
 - Container runtimes: Podman (with rootless support), Docker Desktop (offline RPM), docker group handling
@@ -81,6 +83,7 @@ The `build_export_iso.sh` script requires:
 - WineHQ stable
 - Multimedia: ffmpeg, mpv, OBS, codec packs (RPM Fusion)
 - Office & diagramming: LibreOffice, draw.io (offline RPM)
+- GIS: QGIS with Python bindings
 - Filesystems: NTFS, exFAT, Btrfs, ext4, XFS, F2FS
 - Remote access: xrdp
 - Users: IAC (admin) and AIBUser (standard), both in `docker`
@@ -114,6 +117,8 @@ Packages will be saved to:
 All will be automatically included in the build.
 
 **Note about CRC:** The CRC binary (~60 MB) can be included offline, but the OpenShift bundle (~9 GB) requires internet on first `crc start` OR manual pre-staging. See Post-Install section for details.
+
+**Note about Triton Server:** The Triton container image (~8-10 GB) can be pre-downloaded and will be available at `/usr/share/triton/` for loading into Podman.
 
 **Important:** The fetch script downloads packages for Fedora 43 by default (matching the bootc base image). If you're using a different base image version, set `FEDORA_VERSION` environment variable:
 ```bash
@@ -358,24 +363,34 @@ Notes:
 
 **Important:** Do NOT use Fedora Media Writer. Bootc ISOs use OSTree deployment and require different tools.
 
+**⚠️ Non-Interactive Installer:** The bootc/ostree installer is non-interactive by default. To control installation target on multi-drive systems:
+- **Use the interactive disk selector:** Boot with `rd.bootc.interactive` kernel parameter
+- **Exclude specific drives:** Boot with `rd.disk.exclude=/dev/sdX` to hide drives from installer
+- **Physically disconnect:** Disconnect all drives except target and boot media
+
+### Interactive Disk Selection
+
+**How to use interactive disk selection:**
+
+1. Boot from USB/ISO
+2. At GRUB menu, press 'e' to edit boot parameters
+3. Add `rd.bootc.interactive` to kernel command line
+4. Press Ctrl+X to boot
+5. Select target disk from interactive menu, confirm with "yes"
+
+**Disk exclusion (optional):**
+```
+rd.bootc.interactive rd.disk.exclude=/dev/sda
+```
+
 ### Option 1: dd (Linux/Mac, Recommended)
 ```bash
 # Find your USB device
 lsblk
 
-# Write the ISO (replace /dev/sdX with your USB device)
+# Write ISO to USB (replace /dev/sdX with your USB device)
 sudo dd if=/home/$USER/Documents/Bootc_Test/bootc_ostree/output/bootiso/install.iso \
-    of=/dev/sdX \
-    bs=4M \
-    status=progress \
-    oflag=sync
-
-# Or if you renamed it to SCVU.iso
-sudo dd if=/home/$USER/Documents/Bootc_Test/bootc_ostree/output/bootiso/SCVU.iso \
-    of=/dev/sdX \
-    bs=4M \
-    status=progress \
-    oflag=sync
+    of=/dev/sdX bs=4M status=progress oflag=sync
 ```
 
 ### Option 2: Ventoy (Multi-boot USB)
@@ -399,6 +414,22 @@ sudo dd if=/home/$USER/Documents/Bootc_Test/bootc_ostree/output/bootiso/SCVU.iso
 
 **Note:** Bootc/ostree ISOs do not provide a graphical/manual partitioning option during installation.
 
+### Interactive Disk Selection (Recommended for Multi-Drive Systems)
+
+The SCVU Bootc ISO includes an interactive disk selector script that runs at boot. This allows you to:
+- View all available disks with sizes
+- Select which disk to install to
+- Confirm before installation begins
+
+**To use interactive disk selection:**
+
+1. **Boot from the ISO** and you'll see a menu asking you to select the target disk
+2. **Choose your target disk** from the numbered list
+3. **Confirm the selection** - the installer will show the selected disk and ask for confirmation
+4. **Installation proceeds** to only the selected disk
+
+This prevents accidental installation to wrong drives and is the recommended method for systems with multiple storage devices.
+
 ### Dual Boot with Windows
 
 To install this OS alongside Windows without overwriting it:
@@ -408,7 +439,8 @@ To install this OS alongside Windows without overwriting it:
    - Or use a live USB with GParted to create a new empty partition for Linux
 
 2. **Boot from the bootc/ostree ISO:**
-   - The installer will typically use the largest available unallocated space for installation
+   - Use the interactive disk selector to choose the target partition/disk for Linux
+   - The installer will deploy only to the selected disk
 
 3. **After installation:**
    - GRUB should automatically detect both Windows and Linux for dual boot selection
@@ -422,11 +454,16 @@ To install this OS alongside Windows without overwriting it:
 - **Air‑gapped resilience:** Third‑party RPMs (RPM Fusion, NVIDIA, VS Code, WineHQ, Docker Desktop) can be supplied offline under `bootc_ostree/image/offline-repo/` subfolders. The build guards online fetches when air‑gapped.
 - **Bootc ISOs:** Not compatible with Fedora Media Writer due to OSTree deployment structure. Use dd, Ventoy, Etcher, or Rufus instead.
 - **Version Matching:** Offline packages must match the bootc base image Fedora version (43 by default). Mismatched versions cause dependency conflicts.
+- **Interactive Installer:** The disk selector runs automatically at boot; no manual steps needed
 
 ## Documentation
 
 - Full build and export guide: `bootc_ostree/README.md`
 - Bootc image definition: `bootc_ostree/image/Containerfile`
+- Interactive disk selector: `bootc_ostree/image/disk-selector/`
+  - `disk-selector-initramfs.sh` - interactive boot-time selector
+  - `disk-selector.sh` - manual post-install version
+  - `disk-selector-hook.sh` - dracut integration hook
 
 ## Windows Support (⚠️ Experimental)
 

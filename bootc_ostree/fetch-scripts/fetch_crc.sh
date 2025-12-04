@@ -7,7 +7,7 @@
 
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../" && pwd)"
 OFFLINE_DIR="${SCRIPT_DIR}/image/offline-repo/crc"
 CRC_VERSION="${CRC_VERSION:-2.42.0}"  # Update as needed
 

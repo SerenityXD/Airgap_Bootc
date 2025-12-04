@@ -22,7 +22,7 @@ Before building, download third-party packages on an internet-connected machine.
 ### All-in-One Fetch (Recommended)
 
 ```bash
-# Fetch everything: RPMs, draw.io, OpenShift tools, CRC
+# Fetch everything: RPMs, draw.io, OpenShift tools, CRC, Prism Launcher
 ./fetch_all_offline.sh
 ```
 
@@ -45,6 +45,9 @@ All individual fetch scripts are in the `fetch-scripts/` subdirectory:
 # Fetch CodeReady Containers (CRC)
 ./fetch-scripts/fetch_crc.sh
 
+# Fetch Prism Launcher (Minecraft launcher)
+./fetch-scripts/fetch_prismlauncher.sh
+
 # Fetch specific RPM packages only
 ./fetch-scripts/fetch_offline_rpms.sh --vscode --docker-desktop --nvidia
 
@@ -55,6 +58,41 @@ All individual fetch scripts are in the `fetch-scripts/` subdirectory:
 Packages are saved to `image/offline-repo/<vendor>/` and automatically included during build.
 
 **Note:** If offline packages are not fetched, the Containerfile will automatically fall back to online installation during build (where available).
+
+### Included Software
+
+**Pre-configured System Settings:**
+- Timezone: Asia/Singapore
+- NTP servers: time.windows.com (primary), time.nist.gov, pool.ntp.org
+- Network discovery: Samba, Avahi (mDNS), wsdd (WS-Discovery for Windows)
+
+**Development Tools:**
+- VS Code, Visual Studio Code (flatpak)
+- Python 3.9, 3.10, 3.11, 3.12, 3.13 with unified pip packages:
+  - tritonclient[all], numpy, scipy, pandas, matplotlib
+  - scikit-learn, jupyter, notebook, ipython, seaborn, opencv-python
+- Git, Docker/Podman, OpenShift tools (oc, kubectl)
+- CodeReady Containers (CRC) for local OpenShift
+
+**Gaming:**
+- Lutris (gaming platform with Wine/Proton support)
+- Prism Launcher (Minecraft launcher, AppImage)
+
+**Applications:**
+- Firefox, Google Chrome
+- QGIS (Geographic Information System)
+- Draw.io Desktop (diagrams.net)
+- OBS Studio (online installation only due to Qt6 conflicts)
+
+**Multimedia & Graphics:**
+- NVIDIA drivers and CUDA toolkit (if hardware detected)
+- FFmpeg, VLC, GIMP, Inkscape, Blender
+
+**System Tools:**
+- Interactive disk selector for multi-drive installations
+- XRDP (remote desktop)
+- Wine/WineHQ (Windows app compatibility)
+- Docker Desktop support
 
 ### Known Package Conflicts
 
@@ -202,11 +240,71 @@ sudo dd if=/home/$USER/Documents/Bootc_Test/bootc_ostree/output/bootiso/install.
 - https://rufus.ie
 
 ## Air-gapped Install
-- Boot the USB/ISO
-- The installer provisions the embedded image (no network, no repos)
-- First boot runs systemd units to finalize setup
 
-Post-install steps (run once after first boot):
+### Interactive Installation (Recommended for Multi-Drive Systems)
+
+The ISO includes an interactive disk selector that runs during boot. To enable it:
+
+1. Boot from the USB/ISO
+2. At the boot menu (GRUB), press 'e' to edit boot parameters
+3. Add `rd.bootc.interactive` to the kernel command line (on the line starting with `linux`)
+4. Press Ctrl+X or F10 to boot
+
+The disk selector will:
+- Display all available disks with sizes
+- Let you choose the target installation disk
+- Ask for confirmation before proceeding
+- **Only the selected disk will be used** - other disks remain untouched
+
+**Example:**
+```
+======================================
+SCVU Bootc Workstation Installer
+======================================
+
+Detecting available disks...
+
+1) /dev/sda (238.5G)
+2) /dev/nvme0n1 (953.9G)
+
+Select disk number (1-2): 2
+
+You selected: /dev/nvme0n1 (953.9G)
+
+WARNING: All data on /dev/nvme0n1 will be ERASED!
+Type 'yes' to confirm: yes
+
+Proceeding with bootc installation...
+```
+
+### Protecting Specific Disks
+
+If you want to ensure certain disks are completely invisible to the installer, add this to the kernel command line:
+
+```
+rd.bootc.interactive rd.disk.exclude=/dev/sda
+```
+
+This will:
+- Hide `/dev/sda` from the disk selector menu
+- Prevent the installer from seeing or using that disk
+- Useful for protecting drives with important data
+
+**Example for multiple disks:**
+```
+rd.bootc.interactive rd.disk.exclude=/dev/sda rd.disk.exclude=/dev/sdb
+```
+
+### Non-Interactive Installation (Single Drive or Automated)
+
+If you don't add the `rd.bootc.interactive` parameter:
+- The installer will automatically select a disk (usually the largest available)
+- No user interaction required
+- Suitable for single-drive systems or automated deployments
+
+### Post-Install Steps
+
+After installation completes and you boot into the system (run once after first boot):
 ```bash
 sudo /usr/local/bin/scvu-post-install.sh
 ```
@@ -217,6 +315,18 @@ This will:
 - Ensure current user is in the `docker` group
 
 ## Dual Boot & Manual Partitioning Workaround
+
+### Interactive Disk Selection
+
+For multi-drive systems or when you want to choose the installation disk, use the interactive mode:
+
+1. Boot from the ISO
+2. At the GRUB menu, press 'e' to edit boot parameters
+3. Add `rd.bootc.interactive` to the kernel command line
+4. Press Ctrl+X to boot
+5. Select your target disk from the interactive menu
+
+### Dual Boot with Windows
 
 Bootc/ostree ISOs do not provide a graphical/manual partitioning option during installation. To dual boot with Windows or customize partitions:
 

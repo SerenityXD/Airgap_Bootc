@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 OFFLINE_REPO_DIR="$SCRIPT_DIR/image/offline-repo"
 
 # Target Fedora version (should match bootc base image)
@@ -124,11 +124,13 @@ fetch_rpmfusion() {
     cd "$target_dir"
     dnf download --resolve \
         --releasever=$FEDORA_VERSION \
+        --exclude=ffmpeg-free \
         ffmpeg ffmpeg-libs \
         mpv vlc \
-        obs-studio \
         x264 x265 \
         || log_warn "Some RPM Fusion packages failed to download"
+    
+    log_info "Note: obs-studio will be installed from online repos due to Qt6 dependency conflicts"
     
     log_info "RPM Fusion packages saved to: $target_dir"
 }

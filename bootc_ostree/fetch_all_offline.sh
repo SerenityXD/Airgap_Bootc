@@ -16,6 +16,8 @@ echo "  - RPM packages (RPM Fusion, NVIDIA, VS Code, WineHQ, Docker Desktop)"
 echo "  - draw.io (diagrams.net)"
 echo "  - OpenShift/Kubernetes CLI tools (oc, kubectl)"
 echo "  - CodeReady Containers (CRC)"
+echo "  - NVIDIA Triton Inference Server (~8-10 GB container)"
+echo "  - Prism Launcher (Minecraft launcher)"
 echo ""
 
 # Track what succeeded/failed
@@ -72,6 +74,12 @@ run_fetch "fetch_openshift_tools.sh" "OpenShift/Kubernetes CLI"
 
 # Fetch CRC
 run_fetch "fetch_crc.sh" "CodeReady Containers"
+
+# Fetch Triton Server
+run_fetch "fetch_triton_server.sh" "NVIDIA Triton Inference Server"
+
+# Fetch Prism Launcher
+run_fetch "fetch_prismlauncher.sh" "Prism Launcher"
 
 # Summary
 echo ""
