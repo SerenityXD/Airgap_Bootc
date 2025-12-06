@@ -4,8 +4,9 @@
 
 set -euo pipefail
 
-ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-BUILD_SCRIPT="$ROOT_DIR/build_export_iso.sh"
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+ROOT_DIR=$(cd "$SCRIPT_DIR/.." && pwd)
+BUILD_SCRIPT="$SCRIPT_DIR/build_export_iso.sh"
 
 print_usage() {
   cat <<EOF
@@ -48,7 +49,7 @@ if [[ ! -x "$BUILD_SCRIPT" ]]; then
 fi
 
 # Check if config file exists for interactive mode
-CONFIG_FILE="$ROOT_DIR/config-interactive.toml"
+CONFIG_FILE="$SCRIPT_DIR/config-interactive.toml"
 if [[ ! -f "$CONFIG_FILE" ]]; then
   echo "Error: Config file not found: $CONFIG_FILE" >&2
   echo "Create it with:" >&2

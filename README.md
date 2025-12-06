@@ -21,24 +21,33 @@ Build a fully offline, air-gapped installer ISO by embedding a prebuilt bootc co
   ```bash
   ./bootc_ostree/fetch_all_offline.sh
   ```
-- Build interactive ISO (default):
+- Build interactive ISO (simplest):
   ```bash
-  ./bootc_ostree/build-scripts/build_export_iso.sh --iso-name SCVU-Interactive.iso
+  cd bootc_ostree/build-scripts && ./build-iso-helper.sh interactive
   ```
 - Build non-interactive ISO:
   ```bash
+  cd bootc_ostree/build-scripts && ./build-iso-helper.sh non-interactive
+  ```
+- Build both for testing:
+  ```bash
+  cd bootc_ostree/build-scripts && ./build-iso-helper.sh compare
+  ```
+- Or use the direct script (full control):
+  ```bash
+  ./bootc_ostree/build-scripts/build_export_iso.sh --iso-type anaconda-iso --iso-name SCVU-Interactive.iso
   ./bootc_ostree/build-scripts/build_export_iso.sh --iso-type iso --iso-name SCVU-Standard.iso
   ```
 - Write ISO to USB (replace /dev/sdX):
   ```bash
-  sudo dd if=bootc_ostree/output/bootiso/install.iso of=/dev/sdX bs=4M status=progress oflag=sync
+  sudo dd if=bootc_ostree/output/bootiso/SCVU*.iso of=/dev/sdX bs=4M status=progress oflag=sync
   ```
 
 ## Requirements
 - Host OS: Linux (Fedora/RHEL/Ubuntu) or WSL2 on Windows
 - Tools: `podman`, `sudo` for rootful podman, `curl`, `bash`
 - Image builder: pulls `quay.io/centos-bootc/bootc-image-builder:latest` (cache or pre-pull if offline)
-- Disk: 60–100 GB free during build (image ~28 GB, OCI ~12 GB, ISO ~13 GB)
+- Disk: 70–130 GB free during build (image ~28 GB, OCI ~15 GB, ISO ~17 GB; add ~20 GB for offline packages)
 - Target hardware: 20+ GB disk, 4+ GB RAM, UEFI/BIOS; NVIDIA optional
 
 ## Offline Payloads
