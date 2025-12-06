@@ -67,18 +67,30 @@ RUN dnf -y install \
 COPY offline-repo/prismlauncher/ /opt/prismlauncher/
 RUN if [ -f /opt/prismlauncher/prism-launcher.AppImage ]; then \
         chmod +x /opt/prismlauncher/prism-launcher.AppImage && \
-        echo "Prism Launcher installed"; \
+        ln -sf /opt/prismlauncher/prism-launcher.AppImage /usr/local/bin/prism-launcher && \
+    printf '%s\n' \
+"[Desktop Entry]" \
+"Type=Application" \
+"Name=Prism Launcher" \
+"Comment=Minecraft launcher" \
+"Exec=/usr/local/bin/prism-launcher" \
+"Icon=application-x-executable" \
+"Terminal=false" \
+"Categories=Game;" \
+> /usr/share/applications/prism-launcher.desktop && \
+        echo "Prism Launcher installed and linked"; \
     else \
         echo "Note: Prism Launcher AppImage not found in offline repo"; \
     fi
 
-# Install Google Chrome (from official repo)
-RUN curl -fsSL https://dl.google.com/linux/direct/google-chrome-stable_current_x86_64.rpm -o /tmp/google-chrome.rpm && \
-    dnf -y install /tmp/google-chrome.rpm && \
+# Install Google Chrome (from official repo, skip post-install scripts to avoid RPM lock issues)
+RUN dnf -y install liberation-fonts && \
+    curl -fsSL https://dl.google.com/linux/direct/google-chrome-stable_current_x86_64.rpm -o /tmp/google-chrome.rpm && \
+    rpm -i --noscripts /tmp/google-chrome.rpm && \
     rm -f /tmp/google-chrome.rpm && \
     dnf -y clean all && rm -rf /var/cache/dnf
 
-# Install multiple Python versions
+# Install multiple Python versions with pip
 RUN dnf -y install \
     python3.9 python3.10 python3.11 python3.12 python3.13 \
     # Python ML/data science from Fedora repos
@@ -94,8 +106,9 @@ RUN dnf -y install \
 
 # Install Triton Client libraries via pip (for all Python versions)
 RUN for py in python3.9 python3.10 python3.11 python3.12 python3.13; do \
-        echo "Installing pip packages for $py..."; \
-        $py -m pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    echo "Installing pip packages for $py..."; \
+    $py -m ensurepip --upgrade || (curl -fsSL https://bootstrap.pypa.io/get-pip.py -o /tmp/get-pip.py && $py /tmp/get-pip.py && rm -f /tmp/get-pip.py); \
+    $py -m pip install --no-cache-dir --upgrade pip setuptools wheel && \
         $py -m pip install --no-cache-dir \
             tritonclient[all] \
             numpy scipy pandas \
@@ -142,50 +155,59 @@ RUN dnf -y install \
 RUN mkdir -p /tmp/rpms/{nvidia,vscode,rpmfusion,winehq,docker-desktop,drawio} && \
     mkdir -p /opt/prismlauncher
 
-# Install RPM Fusion packages (offline preferred, online fallback)
+# Install OBS Studio and multimedia codecs (offline preferred, online fallback)
+COPY offline-repo/obs/ /tmp/rpms/obs/
 COPY offline-repo/rpmfusion/ /tmp/rpms/rpmfusion/
-RUN if [ -n "$(ls -A /tmp/rpms/rpmfusion/*.rpm 2>/dev/null)" ]; then \
+RUN if [ -n "$(ls -A /tmp/rpms/obs/*.rpm 2>/dev/null)" ]; then \
+        echo "Installing OBS Studio and dependencies from offline repo..."; \
+        dnf -y install --best --skip-broken /tmp/rpms/obs/*.rpm && \
+        dnf -y clean all && rm -rf /var/cache/dnf && \
+        echo "OBS Studio installed successfully from offline packages"; \
+    elif [ -n "$(ls -A /tmp/rpms/rpmfusion/*.rpm 2>/dev/null)" ]; then \
         echo "Installing RPM Fusion packages from offline repo..."; \
-        dnf -y install /tmp/rpms/rpmfusion/*.rpm || true; \
-        dnf -y install obs-studio || true; \
+        dnf -y install --best --skip-broken /tmp/rpms/rpmfusion/*.rpm && \
+        dnf -y clean all && rm -rf /var/cache/dnf && \
+        echo "RPM Fusion packages installed"; \
     else \
-        echo "Offline RPM Fusion packages not found, attempting online install..."; \
+        echo "Offline OBS/RPM Fusion packages not found, attempting online install..."; \
         dnf -y install \
             https://download1.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm \
             https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm || true; \
-        dnf -y install ffmpeg vlc obs-studio \
+        dnf -y install --best --skip-broken ffmpeg vlc obs-studio \
             gstreamer1-plugins-bad-free-extras gstreamer1-plugins-ugly \
-            gstreamer1-plugin-openh264 gstreamer1-libav lame x264 x265 || true; \
+            gstreamer1-plugin-openh264 gstreamer1-libav lame x264 x265 && \
+        dnf -y clean all && rm -rf /var/cache/dnf || true; \
     fi
 
 # Install NVIDIA drivers (offline preferred, online fallback)
 COPY offline-repo/nvidia/ /tmp/rpms/nvidia/
-RUN if [ -n "$(ls -A /tmp/rpms/nvidia/*.rpm 2>/dev/null)" ]; then \
+RUN if [ -n "$(find /tmp/rpms/nvidia/ -maxdepth 1 -type f -name '*.rpm' 2>/dev/null)" ]; then \
         echo "Installing NVIDIA drivers from offline repo..."; \
-        dnf -y install \
-            --exclude=qt6-qtbase* \
-            --exclude=OpenCL-ICD-Loader* \
-            --exclude=ocl-icd* \
-            --nodeps \
-            /tmp/rpms/nvidia/akmod-nvidia-*.rpm \
-            /tmp/rpms/nvidia/kmod-nvidia-*.rpm \
-            /tmp/rpms/nvidia/*xorg-x11-drv-nvidia-*.rpm \
-            /tmp/rpms/nvidia/nvidia-settings-*.rpm \
-            /tmp/rpms/nvidia/nvidia-libXNVCtrl-*.rpm 2>/dev/null || true; \
-        echo "Installing NVIDIA core packages with dependencies..."; \
-        dnf -y install --best --skip-broken \
-            /tmp/rpms/nvidia/akmod-nvidia-*.rpm \
-            /tmp/rpms/nvidia/xorg-x11-drv-nvidia-[0-9]*.rpm \
-            /tmp/rpms/nvidia/xorg-x11-drv-nvidia-cuda-*.rpm \
-            /tmp/rpms/nvidia/xorg-x11-drv-nvidia-cuda-libs-*.rpm \
-            /tmp/rpms/nvidia/nvidia-settings-*.rpm 2>/dev/null || true; \
+        dnf -y install /tmp/rpms/nvidia/*.rpm || { \
+            echo "Offline NVIDIA installation failed, falling back to online..."; \
+            dnf -y install \
+                https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm && \
+            dnf -y install --best \
+                akmod-nvidia \
+                xorg-x11-drv-nvidia \
+                xorg-x11-drv-nvidia-cuda \
+                xorg-x11-drv-nvidia-cuda-libs \
+                nvidia-settings \
+                nvidia-persistenced; \
+        }; \
     else \
-        echo "Offline NVIDIA packages not found, attempting online install..."; \
+        echo "Offline NVIDIA packages not found, installing from RPM Fusion..."; \
         dnf -y install \
-            https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm || true; \
-        dnf -y install --best --skip-broken akmod-nvidia xorg-x11-drv-nvidia \
-            xorg-x11-drv-nvidia-cuda nvidia-settings || true; \
-    fi
+            https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm && \
+        dnf -y install --best \
+            akmod-nvidia \
+            xorg-x11-drv-nvidia \
+            xorg-x11-drv-nvidia-cuda \
+            xorg-x11-drv-nvidia-cuda-libs \
+            nvidia-settings \
+            nvidia-persistenced; \
+    fi && \
+    dnf -y clean all && rm -rf /var/cache/dnf /tmp/rpms/nvidia
 
 # Install VS Code (offline preferred, online fallback)
 COPY offline-repo/vscode/ /tmp/rpms/vscode/
@@ -253,7 +275,7 @@ COPY vscode-extensions/*.vsix /opt/vscode-extensions/
 # Post-install scripts folder removed; using consolidated script only
 
 # Include image README inside the system image (alongside helper scripts)
-COPY README.md /usr/local/bin/SCVU-README.md
+COPY SCVU-README.md /usr/local/bin/SCVU-README.md
 
 # Remove ML installer script (not used); keep directory only
 
@@ -367,16 +389,16 @@ RUN if [ -f /tmp/crc/crc ]; then \
 
 # Copy Triton Server container image (if present) to user share location
 # Users can load it with: podman load -i ~/.local/share/triton/tritonserver-*.tar
-COPY offline-repo/triton/ /tmp/triton/
-RUN if [ -n "$(ls -A /tmp/triton/*.tar 2>/dev/null)" ]; then \
-        echo "Copying Triton Server container image to shared location..."; \
-        mkdir -p /usr/share/triton; \
-        cp /tmp/triton/*.tar /usr/share/triton/; \
-        chmod 644 /usr/share/triton/*.tar; \
-        echo "✓ Triton Server image copied to /usr/share/triton/"; \
-        echo "  Load with: podman load -i /usr/share/triton/tritonserver-*.tar"; \
-    fi && \
-    rm -rf /tmp/triton
+# COPY offline-repo/triton/ /tmp/triton/
+# RUN if [ -n "$(ls -A /tmp/triton/*.tar 2>/dev/null)" ]; then \
+#         echo "Copying Triton Server container image to shared location..."; \
+#         mkdir -p /usr/share/triton; \
+#         cp /tmp/triton/*.tar /usr/share/triton/; \
+#         chmod 644 /usr/share/triton/*.tar; \
+#         echo "✓ Triton Server image copied to /usr/share/triton/"; \
+#         echo "  Load with: podman load -i /usr/share/triton/tritonserver-*.tar"; \
+#     fi && \
+#     rm -rf /tmp/triton
 
 # Create consolidated post-install script
 RUN cat > /usr/local/bin/scvu-post-install.sh <<'EOF'
@@ -424,7 +446,8 @@ if [ "$#" -gt 0 ]; then
     done
 else
     echo "  For all local users..."
-    mapfile -t USERS < <(getent passwd | awk -F: '$6 ~ /^\/home\// {print $1}')
+    mapfile -t USERS < <(getent passwd | awk -F: '$7 !~ /(nologin|false|sync|halt|shutdown)$/ && $6 ~ /^\// {print $1}')
+    echo "  Found ${#USERS[@]} users: ${USERS[*]}"
     for U in "${USERS[@]}"; do 
         install_extensions_for_user "$U"
     done
@@ -433,7 +456,8 @@ fi
 # 2) Place README on each user's Desktop
 echo "Step 2: Copying README to user desktops..."
 if [ -f /usr/local/bin/SCVU-README.md ]; then
-    mapfile -t USERS < <(getent passwd | awk -F: '$6 ~ /^\/home\// {print $1}')
+    mapfile -t USERS < <(getent passwd | awk -F: '$7 !~ /(nologin|false|sync|halt|shutdown)$/ && $6 ~ /^\// {print $1}')
+    echo "  Found ${#USERS[@]} users: ${USERS[*]}"
     for U in "${USERS[@]}"; do
         HOME_DIR=$(getent passwd "$U" | awk -F: '{print $6}')
         [ -d "$HOME_DIR" ] || continue
@@ -486,15 +510,13 @@ echo "Note: Some services may require a reboot to take full effect"
 EOF
 RUN chmod +x /usr/local/bin/scvu-post-install.sh
 
-# Create docker group and users
+# Create docker group and default user
 RUN groupadd -f docker && \
-    useradd -m -G wheel,docker -s /bin/bash IAC 2>/dev/null || true && \
-    useradd -m -G docker -s /bin/bash AIBUser 2>/dev/null || true
+    useradd -m -G wheel,docker -s /bin/bash IAC 2>/dev/null || true
 
-# Set passwords (password: fedora - CHANGE THIS!)
-RUN echo 'root:fedora' | chpasswd && \
-    echo 'IAC:fedora' | chpasswd && \
-    echo 'AIBUser:fedora' | chpasswd
+# Set passwords
+RUN echo 'root:T@bleTennis0!04' | chpasswd && \
+    echo 'IAC:T@bleTennis0!04' | chpasswd
 
 # Enable services
 RUN systemctl enable sddm || true && \
@@ -508,50 +530,13 @@ Welcome to SCVU Bootc Workstation
 
 Users:
 - IAC (admin, sudo access)
-- AIBUser (standard user)
-Both: password is 'fedora' - CHANGE IT!
 
 Post-install tasks:
-1. Change passwords: passwd
+1. Run consolidated post install: sudo /usr/local/bin/scvu-post-install.sh
 2. Install JS frameworks: /usr/local/bin/install-js-frameworks.sh
-3. Run consolidated post install: sudo /usr/local/bin/scvu-post-install.sh
 
 All users are in the docker group for Docker Desktop.
 EOF
-
-# Add interactive disk selector for installation - integrated into initramfs
-COPY disk-selector/ /usr/local/lib/disk-selector/
-RUN chmod +x /usr/local/lib/disk-selector/*.sh
-
-# Install disk selector scripts to system paths
-RUN ln -sf /usr/local/lib/disk-selector/disk-selector.sh /usr/local/bin/disk-selector.sh && \
-    ln -sf /usr/local/lib/disk-selector/disk-selector-initramfs.sh /usr/local/bin/disk-selector-initramfs.sh && \
-    ln -sf /usr/local/lib/disk-selector/run-disk-selector.sh /usr/local/bin/run-disk-selector.sh
-
-# Create dracut module for interactive disk selection
-RUN mkdir -p /usr/lib/dracut/modules.d/50disk-selector && \
-    echo '#!/bin/bash' > /usr/lib/dracut/modules.d/50disk-selector/module-setup.sh && \
-    echo 'check() { return 0; }' >> /usr/lib/dracut/modules.d/50disk-selector/module-setup.sh && \
-    echo 'depends() { echo "bash"; }' >> /usr/lib/dracut/modules.d/50disk-selector/module-setup.sh && \
-    echo 'install() {' >> /usr/lib/dracut/modules.d/50disk-selector/module-setup.sh && \
-    echo '    inst_simple /usr/local/bin/disk-selector-initramfs.sh /usr/bin/disk-selector-initramfs.sh' >> /usr/lib/dracut/modules.d/50disk-selector/module-setup.sh && \
-    echo '    inst_hook cmdline 50 "$moddir/disk-selector-hook.sh"' >> /usr/lib/dracut/modules.d/50disk-selector/module-setup.sh && \
-    echo '}' >> /usr/lib/dracut/modules.d/50disk-selector/module-setup.sh && \
-    chmod +x /usr/lib/dracut/modules.d/50disk-selector/module-setup.sh
-
-# Create the dracut hook that runs the selector
-RUN echo '#!/bin/bash' > /usr/lib/dracut/modules.d/50disk-selector/disk-selector-hook.sh && \
-    echo '# Run disk selector if rd.bootc.interactive is set' >> /usr/lib/dracut/modules.d/50disk-selector/disk-selector-hook.sh && \
-    echo 'if getarg rd.bootc.interactive; then' >> /usr/lib/dracut/modules.d/50disk-selector/disk-selector-hook.sh && \
-    echo '    /usr/bin/disk-selector-initramfs.sh' >> /usr/lib/dracut/modules.d/50disk-selector/disk-selector-hook.sh && \
-    echo '    if [ -f /run/bootc-install-device ]; then' >> /usr/lib/dracut/modules.d/50disk-selector/disk-selector-hook.sh && \
-    echo '        export BOOTC_INSTALL_DEVICE=$(cat /run/bootc-install-device)' >> /usr/lib/dracut/modules.d/50disk-selector/disk-selector-hook.sh && \
-    echo '    fi' >> /usr/lib/dracut/modules.d/50disk-selector/disk-selector-hook.sh && \
-    echo 'fi' >> /usr/lib/dracut/modules.d/50disk-selector/disk-selector-hook.sh && \
-    chmod +x /usr/lib/dracut/modules.d/50disk-selector/disk-selector-hook.sh
-
-# Add dracut config to always include the disk-selector module
-RUN echo 'add_dracutmodules+=" disk-selector "' > /etc/dracut.conf.d/50-disk-selector.conf
 
 # Bootc configuration
 RUN echo 'SCVU Bootc' > /etc/hostname && \

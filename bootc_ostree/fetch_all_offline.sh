@@ -14,6 +14,7 @@ echo ""
 echo "This script will download:"
 echo "  - RPM packages (RPM Fusion, NVIDIA, VS Code, WineHQ, Docker Desktop)"
 echo "  - draw.io (diagrams.net)"
+echo "  - OBS Studio (with offline dependencies)"
 echo "  - OpenShift/Kubernetes CLI tools (oc, kubectl)"
 echo "  - CodeReady Containers (CRC)"
 echo "  - NVIDIA Triton Inference Server (~8-10 GB container)"
@@ -66,8 +67,14 @@ else
     FAILED+=("RPM Packages")
 fi
 
+# Fix NVIDIA offline repository with complete dependency tree
+run_fetch "fix_nvidia_offline.sh" "NVIDIA Driver Dependencies (Complete)"
+
 # Fetch draw.io
 run_fetch "fetch_drawio.sh" "draw.io"
+
+# Fetch OBS Studio
+run_fetch "fetch_obs.sh" "OBS Studio"
 
 # Fetch OpenShift tools
 run_fetch "fetch_openshift_tools.sh" "OpenShift/Kubernetes CLI"

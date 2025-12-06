@@ -1,0 +1,10 @@
+[customizations.installer.kickstart]
+# Empty kickstart enables Anaconda interactive mode
+# When bootc-image-builder encounters only ostreecontainer directive
+# with no other kickstart content, Anaconda enters interactive installation
+contents = ""
+
+[customizations.kernel]
+# Optional: custom kernel arguments for interactive mode
+# Can include: rd.bootc.interactive, console settings, etc.
+# Keep empty to use defaults

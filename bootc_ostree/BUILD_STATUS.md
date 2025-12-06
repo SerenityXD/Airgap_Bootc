@@ -3,7 +3,13 @@
 ## Current Status: Interactive Installation & Enhanced Disk Selection ✓
 
 **Started:** November 30, 2025  
-**Updated:** December 4, 2025
+**Updated:** December 6, 2025
+
+### Recent Changes (December 6, 2025)
+- ✅ Rebuilt ISO with latest bootc-image-builder (Fedora 43 base)
+- ✅ Verified installer: `output/bootiso/SCVU.iso` (17G, built Dec 6 19:58)
+- ✅ End-to-end build duration: 00:38:19 (image build, OCI save, rootful load, ISO compose)
+- ✅ Documentation refresh: added README appendix with build matrix, env flags, offline validation, troubleshooting, and FAQ
 
 ### Recent Changes (December 4, 2025)
 - ✅ Implemented true interactive disk selection via dracut module
@@ -89,8 +95,8 @@ ls -lh /home/benson/Documents/Bootc_Test/bootc_ostree/output/bootiso/
 ```
 
 ### Outputs
-- **OCI Archive:** `bootc_ostree/oci-image/scvu-bootc-kde.oci`
-- **Installer ISO:** `bootc_ostree/output/bootiso/install.iso` (size: 13G; built Nov 30 23:35)
+- **OCI Archive:** `bootc_ostree/oci-image/scvu-bootc-kde.oci` (size: 15G; built Dec 6 19:46)
+- **Installer ISO:** `bootc_ostree/output/bootiso/SCVU.iso` (size: 17G; built Dec 6 19:58)
 - **Build Log:** `bootc_ostree/output/iso-build.log`
 
 ### System Image Contents
@@ -112,10 +118,10 @@ ls -lh /home/benson/Documents/Bootc_Test/bootc_ostree/output/bootiso/
 ✅ **Network Discovery:** Samba, Avahi (mDNS), wsdd (Windows 10/11 WS-Discovery)
 
 ### Offline Package Support
-All third-party packages support offline inclusion:
-- **RPMs:** RPM Fusion, NVIDIA, VS Code, WineHQ, Docker Desktop
+All third-party packages support offline inclusion (current stash: ~20 GB at `image/offline-repo/`):
+- **RPMs:** RPM Fusion, NVIDIA, VS Code, WineHQ, Docker Desktop (majority of size)
 - **Applications:** draw.io, Prism Launcher AppImage (88 MB)
-- **Binaries:** oc, kubectl, CRC, Triton Server container image
+- **Binaries:** oc, kubectl, CRC, Triton Server container image (optional)
 - **Location:** `image/offline-repo/<vendor>/` and `image/disk-selector/`
 - **Fallback:** Online installation during build if offline packages not present
 
@@ -141,21 +147,16 @@ All third-party packages support offline inclusion:
    - See README for fully offline CRC setup
 
 ### Disk Space Usage
-- **Output directory** (ISO + manifests): ~15 GB
-- **OCI archive**: ~13 GB
-- **Container image** (rootless & rootful): ~28-35 GB (varies by system)
-- **Offline packages** (actual current): ~2.6 GB
-  - OpenShift tools (oc/kubectl): 370 MB
-  - CRC binary: 95 MB
-  - draw.io: 101 MB
-  - Prism Launcher AppImage: 88 MB
-  - RPM Fusion, NVIDIA, VS Code, WineHQ, Docker Desktop: ~1.8 GB
+- **Output directory** (ISO + manifests): ~17 GB (current `SCVU.iso`)
+- **OCI archive:** ~15 GB (current `scvu-bootc-kde.oci`)
+- **Container image** (rootless & rootful caches): ~28-35 GB (varies by system)
+- **Offline packages** (actual current): ~20 GB (NVIDIA + RPM Fusion dominate)
 - **Triton Server** (optional): 8-10 GB
 
 **Total Free Space Recommended:**
-- **Minimal build** (online fallback, no offline packages): 60 GB
-- **Full build** (all packages except Triton): 75-85 GB
-- **Complete build** (all packages + Triton): 85-100 GB
+- **Minimal build** (online fallback, no offline packages): ~70 GB
+- **Full build** (all current offline packages, no Triton): ~100-120 GB
+- **Complete build** (all packages + Triton): ~110-130 GB
 
 ### Next Steps
 1. **Verify ISO:** `ls -lh bootc_ostree/output/bootiso/SCVU.iso` (or `install.iso`)
@@ -177,7 +178,7 @@ All third-party packages support offline inclusion:
 ### Troubleshooting
 - **Build fails:** Check `iso-build.log` for errors
 - **ISO not found:** Verify path (`bootc_ostree/output/bootiso/`); use `--iso-name` for custom naming
-- **Out of space:** Need at least 60 GB free for full build with offline packages
+- **Out of space:** Need at least ~100 GB free for full build with current offline packages
 - **Sudo timeout:** Build script now keeps sudo active; password requested once at start
 - **Disk selection not working:** Ensure `rd.bootc.interactive` is added to kernel command line at GRUB boot menu
 

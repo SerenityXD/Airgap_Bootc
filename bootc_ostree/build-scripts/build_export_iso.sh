@@ -5,6 +5,21 @@ set -euo pipefail
 # Start timer
 BUILD_START_TIME=$(date +%s)
 
+# Setup logging
+ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+LOG_DIR="$ROOT_DIR/logs"
+mkdir -p "$LOG_DIR"
+LOG_FILE="$LOG_DIR/build-$(date +%Y%m%d-%H%M%S).log"
+
+# Log both to file and console
+exec > >(tee -a "$LOG_FILE") 2>&1
+
+echo "========================================"
+echo "Build started: $(date)"
+echo "Log file: $LOG_FILE"
+echo "========================================"
+echo ""
+
 # Validate sudo access early and start keep-alive
 echo "Checking sudo access..."
 if ! sudo -n true 2>/dev/null; then
@@ -26,7 +41,6 @@ SUDO_KEEPALIVE_PID=$!
 trap "kill $SUDO_KEEPALIVE_PID 2>/dev/null || true" EXIT
 
 # Config (override via env or flags)
-ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 IMAGE_DIR="$ROOT_DIR/image"
 TAG="${TAG:-localhost/scvu-bootc:kde}"
 OCI_DIR="$ROOT_DIR/oci-image"
@@ -40,6 +54,8 @@ FETCH_OFFLINE="${FETCH_OFFLINE:-false}"
 FETCH_PACKAGES="${FETCH_PACKAGES:-all}"
 SKIP_EXISTING="${SKIP_EXISTING:-true}"
 ISO_NAME="${ISO_NAME:-}"  # Optional custom ISO name
+ISO_TYPE="${ISO_TYPE:-anaconda-iso}"  # anaconda-iso (interactive, DEFAULT) or iso (non-interactive)
+CONFIG_FILE="${CONFIG_FILE:-config-interactive.toml}"  # TOML config file for Anaconda customization
 
 usage() {
   cat <<EOF
@@ -56,16 +72,23 @@ Options (env or flags):
   -p, --packages PACKAGES       Packages to fetch (default: all, or: vscode,nvidia,docker-desktop,etc)
   -s, --skip-existing           Skip fetching if packages already exist (default: true)
   --iso-name NAME               Custom output ISO filename (default: install.iso)
+  --iso-type TYPE               ISO type: 'anaconda-iso' (interactive, DEFAULT) or 'iso' (non-interactive)
+                                (default: anaconda-iso)
+  --config FILE                 TOML config file for bootc-image-builder customizations
+                                (default: config-interactive.toml)
   -h, --help                    Show this help
 
-Environment overrides are honored: TAG, OUTPUT_DIR, OCI_PATH, ROOTFS, BUILDER_IMG, TMPDIR, FETCH_OFFLINE, FETCH_PACKAGES, SKIP_EXISTING, ISO_NAME
+Environment overrides are honored: TAG, OUTPUT_DIR, OCI_PATH, ROOTFS, BUILDER_IMG, TMPDIR, FETCH_OFFLINE, FETCH_PACKAGES, SKIP_EXISTING, ISO_NAME, ISO_TYPE, CONFIG_FILE
 
 Examples:
-  # Basic build with online fallback
+  # Build interactive installer ISO (DEFAULT)
   $(basename "$0")
 
   # Build with custom ISO name
-  $(basename "$0") --iso-name MyCustom.iso
+  $(basename "$0") --iso-name SCVU-Custom.iso
+
+  # Build non-interactive (pre-configured) ISO
+  $(basename "$0") --iso-type iso
 EOF
 }
 
@@ -82,41 +105,12 @@ while [[ ${1:-} ]]; do
     -p|--packages) FETCH_PACKAGES="$2"; shift 2;;
     -s|--skip-existing) SKIP_EXISTING="true"; shift;;
     --iso-name) ISO_NAME="$2"; shift 2;;
+    --iso-type) ISO_TYPE="$2"; shift 2;;
+    --config) CONFIG_FILE="$2"; shift 2;;
     -h|--help) usage; exit 0;;
     *) echo "Unknown arg: $1"; usage; exit 2;;
   esac
 done
-
-summary() {
-  local BUILD_END_TIME=$(date +%s)
-  local BUILD_DURATION=$((BUILD_END_TIME - BUILD_START_TIME))
-  local HOURS=$((BUILD_DURATION / 3600))
-  local MINUTES=$(((BUILD_DURATION % 3600) / 60))
-  local SECONDS=$((BUILD_DURATION % 60))
-  
-  echo ""
-  echo "== Summary =="
-  echo "Image tag:        $TAG"
-  echo "OCI archive:      $OCI_PATH"
-  echo "Output directory: $OUTPUT_DIR"
-  printf "Build time:       %02d:%02d:%02d\n" $HOURS $MINUTES $SECONDS
-  if [[ -n "${ISO_PATH:-}" && -f "$ISO_PATH" ]]; then
-    ls -lh "$ISO_PATH" || true
-    file "$ISO_PATH" || true
-    echo ""
-    echo "== Next Steps =="
-    echo "Burn ISO to USB using one of these methods:"
-    echo "  • Linux:   sudo dd if=$ISO_PATH of=/dev/sdX bs=4M status=progress && sync"
-    echo "  • Ventoy:  Copy ISO to Ventoy USB partition"
-    echo "  • Etcher:  balenaEtcher (cross-platform GUI)"
-    echo "  • Windows: Rufus or balenaEtcher"
-    echo ""
-    echo "⚠️  DO NOT use Fedora Media Writer (incompatible with bootc/ostree ISOs)"
-    echo ""
-    echo "For detailed instructions, see README.md section 'Burning ISO to USB'"
-  fi
-}
-trap summary EXIT
 
 # Prepare directories and ensure a clean output area before build
 mkdir -p "$TMPDIR" "$OCI_DIR"
@@ -126,6 +120,22 @@ if ! rm -rf "$OUTPUT_DIR" 2>/dev/null; then
   sudo rm -rf "$OUTPUT_DIR" || true
 fi
 mkdir -p "$OUTPUT_DIR"
+
+# Validate mode configuration
+if [[ "$ISO_TYPE" == "anaconda-iso" ]]; then
+  if [[ ! -f "$CONFIG_FILE" ]]; then
+    echo "[prep] Error: Config file not found: $CONFIG_FILE" >&2
+    exit 1
+  fi
+  
+  echo "[prep] Using anaconda-iso (interactive installer) mode - DEFAULT"
+  echo "[prep] Config file: $CONFIG_FILE"
+elif [[ "$ISO_TYPE" == "iso" ]]; then
+  echo "[prep] Using iso (non-interactive, pre-configured) mode"
+else
+  echo "[prep] Error: Unknown ISO_TYPE '$ISO_TYPE'. Use 'anaconda-iso' (DEFAULT) or 'iso'" >&2
+  exit 1
+fi
 
 # 0) Fetch offline packages (optional)
 if [[ "$FETCH_OFFLINE" == "true" ]]; then
@@ -182,13 +192,36 @@ echo "[3/4] Rootful load completed in $((STEP_END - STEP_START))s"
 
 # 4) Build ISO with bootc-image-builder
 echo "[4/4] Creating ISO via $BUILDER_IMG ..."
+echo "[4/4] ISO Type: $ISO_TYPE"
 STEP_START=$(date +%s)
-sudo podman run --rm -it --privileged \
-  --security-opt label=type:unconfined_t \
-  -v "$OUTPUT_DIR:/output" \
-  -v /var/lib/containers/storage:/var/lib/containers/storage:rw \
-  "$BUILDER_IMG" \
-  --type iso --rootfs "$ROOTFS" "$TAG" | tee "$OUTPUT_DIR/iso-build.log"
+
+# Build the podman run command
+PODMAN_CMD=(
+  sudo podman run --rm -it --privileged
+  --security-opt label=type:unconfined_t
+  -v "$OUTPUT_DIR:/output"
+  -v /var/lib/containers/storage:/var/lib/containers/storage:rw
+)
+
+# Add config file volume mount if provided
+if [[ -n "$CONFIG_FILE" ]]; then
+  CONFIG_BASENAME=$(basename "$CONFIG_FILE")
+  PODMAN_CMD+=("-v" "$CONFIG_FILE:/config/$CONFIG_BASENAME:ro")
+fi
+
+# Add the builder image and arguments
+PODMAN_CMD+=("$BUILDER_IMG" "--type" "$ISO_TYPE" "--rootfs" "$ROOTFS")
+
+# Add config file reference if provided (for anaconda-iso mode)
+if [[ -n "$CONFIG_FILE" ]]; then
+  CONFIG_BASENAME=$(basename "$CONFIG_FILE")
+  PODMAN_CMD+=("--config" "/config/$CONFIG_BASENAME")
+fi
+
+PODMAN_CMD+=("$TAG")
+
+# Execute the build
+"${PODMAN_CMD[@]}" | tee "$OUTPUT_DIR/iso-build.log"
 STEP_END=$(date +%s)
 echo "[4/4] ISO creation completed in $((STEP_END - STEP_START))s"
 
@@ -229,3 +262,25 @@ echo ""
 echo "ISO created: $ISO_PATH"
 ls -lh "$ISO_PATH"
 file "$ISO_PATH"
+BUILD_END_TIME=$(date +%s)
+BUILD_DURATION=$((BUILD_END_TIME - BUILD_START_TIME))
+BUILD_MINUTES=$((BUILD_DURATION / 60))
+BUILD_SECONDS=$((BUILD_DURATION % 60))
+
+echo ""
+echo "========================================"
+echo "== Summary =="
+echo "========================================"
+echo "Image tag:        $TAG"
+echo "OCI archive:      $OCI_PATH"
+echo "Output directory: $OUTPUT_DIR"
+echo "ISO type:         $ISO_TYPE"
+if [[ -n "$CONFIG_FILE" ]]; then
+  echo "Config file:      $CONFIG_FILE"
+fi
+echo "Build time:       $(printf "%02d:%02d" $BUILD_MINUTES $BUILD_SECONDS)"
+echo "Log file:         $LOG_FILE"
+echo "========================================"
+echo "Build completed: $(date)"
+echo "========================================"
+ls -lh "$ISO_PATH"
