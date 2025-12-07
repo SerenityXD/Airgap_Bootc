@@ -1,4 +1,4 @@
-# SCVU Bootc Workstation: Compact Presentation Guide
+# Automated Air-Gap Fedora Deployment Guide
 
 ## 🎯 The Pitch (30 seconds)
 
@@ -21,7 +21,19 @@
 
 ---
 
-## 🏗️ What's Inside (The Stack)
+## 🧩 What is Bootc?
+
+**Bootc** is a modern approach to operating system deployment using container images. Instead of installing and configuring packages individually, Bootc delivers the entire OS—including desktop, applications, and configuration—as a single, reproducible container image. This image is then atomically deployed to target machines, ensuring consistency and enabling features like rollback and easy updates.
+
+**Key features of Bootc:**
+- Atomic OS updates and rollbacks
+- Immutable root filesystem for security and reliability
+- Container-based builds for reproducibility
+- Fast deployment and easy customization
+- Ideal for air-gapped, enterprise, and research environments
+
+Bootc is currently available for Fedora, with ongoing work to support other Linux distributions.
+
 
 ✅ **Desktop:** Fedora 43 KDE + SDDM + XRDP  
 ✅ **Development:** Python 3.9–3.13, VS Code, Git, GCC/CMake, Docker, Podman  
@@ -136,7 +148,7 @@
 ## 💡 Key Talking Points
 
 ### Problem Statement
-> *"How do you deploy identical, fully-configured workstations—offline—in under 30 minutes each?"*
+> *"How do you ensure uniform software deployment across diverse machines in air-gapped environments without spending hours configuring each one?"*
 
 ### Unique Value Proposition
 - ✅ **Reproducible:** Same system, same packages, every time
@@ -222,4 +234,35 @@ A: Home directories are writable (separate from immutable rootfs). Backup/restor
 
 ---
 
-**This compact guide captures all essentials while cutting content in half. Adapt depth based on audience.**
+
+---
+
+## ⚠️ Drawbacks & Limitations
+
+- **Large ISO Size:** The all-inclusive ISO (14–15 GB) requires significant storage and may be slow to transfer or copy, especially in bandwidth-constrained environments.
+- **Hardware Compatibility:** While Fedora Bootc supports a wide range of hardware, some edge cases (very new or very old devices, proprietary drivers) may require manual tweaks or additional testing.
+- **Limited OS Choices:** Current implementation is Fedora-only; adapting to other distributions (RHEL, Ubuntu) may need extra work and validation.
+- **Update Process:** Updates require rebuilding and redeploying the ISO; there is no built-in online update mechanism (OTA) yet.
+- **Immutable Root Filesystem:** While this improves security and reproducibility, it can limit advanced customization or installation of system-level packages post-deployment.
+- **Learning Curve:** IT teams may need to learn new tooling (Bootc, container-based OS builds) and update existing deployment workflows.
+- **Initial Setup Time:** The first build and configuration (fetching packages, customizing Containerfile) can take time and require reliable internet access.
+- **Offline Package Staleness:** Pre-downloaded packages may become outdated if the ISO is not rebuilt regularly, leading to potential security or compatibility issues.
+
+---
+
+## 🎬 Conclusion
+
+SCVU Bootc transforms workstation deployment from a time-consuming, error-prone manual process into a streamlined, automated workflow. By leveraging container-based OS images and offline package bundling, organizations can:
+
+- **Deploy faster:** 74% time reduction per machine
+- **Deploy consistently:** Zero configuration drift across all systems
+- **Deploy securely:** Air-gapped operation with reproducible builds
+- **Scale efficiently:** From 10 to 1000 machines with the same effort
+
+Whether you're managing a research lab, enterprise IT infrastructure, or edge computing fleet, Bootc provides the foundation for modern, reliable system deployment. The initial investment in setup pays dividends immediately through reduced deployment time, improved consistency, and simplified maintenance.
+
+**Ready to transform your deployment workflow? Start with a pilot, prove the value, then scale organization-wide.**
+
+---
+
+**End of Guide**
