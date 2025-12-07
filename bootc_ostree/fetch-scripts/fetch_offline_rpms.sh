@@ -6,9 +6,30 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 OFFLINE_REPO_DIR="$SCRIPT_DIR/image/offline-repo"
+ARCH="$(uname -m)"
+BASE_IMAGE_VERSION="43"
 
 # Target Fedora version (should match bootc base image)
 FEDORA_VERSION="${FEDORA_VERSION:-43}"
+
+if [[ "$FEDORA_VERSION" != "$BASE_IMAGE_VERSION" ]]; then
+    echo "${RED}[ERROR]${NC} FEDORA_VERSION=$FEDORA_VERSION does not match base image ($BASE_IMAGE_VERSION). Export FEDORA_VERSION=$BASE_IMAGE_VERSION to proceed."
+    exit 1
+fi
+# Temporary repos/cachedir to avoid touching host config
+REPO_TMP=$(mktemp -d)
+cleanup() {
+    rm -rf "$REPO_TMP"
+}
+trap cleanup EXIT
+
+DNF_BASE_OPTS=(
+    --releasever="$FEDORA_VERSION"
+    --setopt=gpgcheck=0
+    --setopt=repo_gpgcheck=0
+    --setopt=install_weak_deps=False
+    --setopt=cachedir="$REPO_TMP/cache"
+)
 
 # Colors for output
 GREEN='\033[0;32m'
@@ -32,12 +53,11 @@ usage() {
     cat <<EOF
 Usage: $(basename "$0") [OPTIONS]
 
-Fetch offline RPMs for third-party packages (RPM Fusion, NVIDIA, VS Code, WineHQ, Docker Desktop)
+Fetch offline RPMs for third-party packages (RPM Fusion, VS Code, WineHQ, Docker Desktop)
 
 Options:
   --all                 Fetch all packages (default)
   --rpmfusion          Fetch RPM Fusion packages only
-  --nvidia             Fetch NVIDIA packages only
   --vscode             Fetch VS Code only
   --winehq             Fetch WineHQ packages only
   --docker-desktop     Fetch Docker Desktop only
@@ -50,8 +70,8 @@ Environment Variables:
 Examples:
   $(basename "$0") --all
   $(basename "$0") --vscode --docker-desktop
-  $(basename "$0") --nvidia --skip-existing
-  FEDORA_VERSION=43 $(basename "$0") --nvidia
+  $(basename "$0") --rpmfusion --skip-existing
+  FEDORA_VERSION=43 $(basename "$0") --vscode
 
 Note: This script requires internet access and runs 'dnf download' and 'curl'.
       Downloaded packages must match the Fedora version of the bootc base image.
@@ -61,7 +81,6 @@ EOF
 # Parse arguments
 FETCH_ALL=true
 FETCH_RPMFUSION=false
-FETCH_NVIDIA=false
 FETCH_VSCODE=false
 FETCH_WINEHQ=false
 FETCH_DOCKER=false
@@ -71,7 +90,6 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --all) FETCH_ALL=true; shift ;;
         --rpmfusion) FETCH_ALL=false; FETCH_RPMFUSION=true; shift ;;
-        --nvidia) FETCH_ALL=false; FETCH_NVIDIA=true; shift ;;
         --vscode) FETCH_ALL=false; FETCH_VSCODE=true; shift ;;
         --winehq) FETCH_ALL=false; FETCH_WINEHQ=true; shift ;;
         --docker-desktop) FETCH_ALL=false; FETCH_DOCKER=true; shift ;;
@@ -114,16 +132,16 @@ fetch_rpmfusion() {
         return
     fi
     
-    # Enable RPM Fusion repos temporarily
-    sudo dnf install -y \
-        https://download1.rpmfusion.org/free/fedora/rpmfusion-free-release-${FEDORA_VERSION}.noarch.rpm \
-        https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${FEDORA_VERSION}.noarch.rpm \
-        2>/dev/null || log_warn "RPM Fusion repos may already be enabled"
-    
-    # Download multimedia codecs and tools
+    local rpmfusion_free="https://download1.rpmfusion.org/free/fedora/releases/${FEDORA_VERSION}/Everything/${ARCH}/os"
+    local rpmfusion_nonfree="https://download1.rpmfusion.org/nonfree/fedora/releases/${FEDORA_VERSION}/Everything/${ARCH}/os"
+
     cd "$target_dir"
     dnf download --resolve \
-        --releasever=$FEDORA_VERSION \
+        "${DNF_BASE_OPTS[@]}" \
+        --setopt=reposdir=/etc/yum.repos.d \
+        --repofrompath=rpmfusion-free,${rpmfusion_free} \
+        --repofrompath=rpmfusion-nonfree,${rpmfusion_nonfree} \
+        --enablerepo=rpmfusion-free --enablerepo=rpmfusion-nonfree \
         --exclude=ffmpeg-free \
         ffmpeg ffmpeg-libs \
         mpv vlc \
@@ -133,41 +151,6 @@ fetch_rpmfusion() {
     log_info "Note: obs-studio will be installed from online repos due to Qt6 dependency conflicts"
     
     log_info "RPM Fusion packages saved to: $target_dir"
-}
-
-#=============================================================================
-# NVIDIA
-#=============================================================================
-fetch_nvidia() {
-    log_info "Fetching NVIDIA packages..."
-    
-    local target_dir="$OFFLINE_REPO_DIR/nvidia"
-    
-    if [[ "$SKIP_EXISTING" == "true" && -n "$(ls "$target_dir"/*.rpm 2>/dev/null)" ]]; then
-        log_warn "NVIDIA packages already exist, skipping."
-        return
-    fi
-    
-    # Enable RPM Fusion for NVIDIA drivers
-    sudo dnf install -y \
-        https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${FEDORA_VERSION}.noarch.rpm \
-        2>/dev/null || true
-    
-    cd "$target_dir"
-    
-    # Download NVIDIA driver packages
-    log_info "Downloading NVIDIA drivers (this may take a while)..."
-    dnf download --resolve \
-        --releasever=$FEDORA_VERSION \
-        --setopt=install_weak_deps=False \
-        akmod-nvidia \
-        xorg-x11-drv-nvidia \
-        xorg-x11-drv-nvidia-cuda \
-        nvidia-settings \
-        || log_warn "Some NVIDIA packages failed to download"
-    
-    log_info "NVIDIA packages saved to: $target_dir"
-    log_warn "Note: NVIDIA drivers require kernel-devel matching your target kernel version"
 }
 
 #=============================================================================
@@ -185,16 +168,13 @@ fetch_vscode() {
     
     cd "$target_dir"
     
-    # Import Microsoft GPG key
-    sudo rpm --import https://packages.microsoft.com/keys/microsoft.asc
-    
-    # Add VS Code repo
-    sudo sh -c 'echo -e "[code]\nname=Visual Studio Code\nbaseurl=https://packages.microsoft.com/yumrepos/vscode\nenabled=1\ngpgcheck=1\ngpgkey=https://packages.microsoft.com/keys/microsoft.asc" > /etc/yum.repos.d/vscode.repo'
-    
-    # Download VS Code (force x86_64 by specifying arch in package name)
+    local code_repo="https://packages.microsoft.com/yumrepos/vscode"
+
     dnf download --resolve \
-        --releasever=$FEDORA_VERSION \
-        --setopt=install_weak_deps=False \
+        "${DNF_BASE_OPTS[@]}" \
+        --setopt=reposdir=/etc/yum.repos.d \
+        --repofrompath=code,${code_repo} \
+        --enablerepo=code \
         code.x86_64 \
         || log_error "Failed to download VS Code"
     
@@ -214,15 +194,15 @@ fetch_winehq() {
         return
     fi
     
-    # Add WineHQ repository
-    sudo dnf config-manager --add-repo https://dl.winehq.org/wine-builds/fedora/${FEDORA_VERSION}/winehq.repo || true
-    
+    local wine_repo="https://dl.winehq.org/wine-builds/fedora/${FEDORA_VERSION}/"
+
     cd "$target_dir"
-    
-    # Download Wine stable
+
     dnf download --resolve \
-        --releasever=$FEDORA_VERSION \
-        --setopt=install_weak_deps=False \
+        "${DNF_BASE_OPTS[@]}" \
+        --setopt=reposdir=/etc/yum.repos.d \
+        --repofrompath=winehq,${wine_repo} \
+        --enablerepo=winehq \
         winehq-stable \
         || log_warn "Failed to download WineHQ packages (conflicts with wine-desktop? Try: sudo dnf remove -y wine-desktop)"
     
@@ -274,7 +254,6 @@ log_info "Starting offline RPM fetch..."
 log_info "Target directory: $OFFLINE_REPO_DIR"
 
 [[ "$FETCH_RPMFUSION" == "true" ]] && fetch_rpmfusion
-[[ "$FETCH_NVIDIA" == "true" ]] && fetch_nvidia
 [[ "$FETCH_VSCODE" == "true" ]] && fetch_vscode
 [[ "$FETCH_WINEHQ" == "true" ]] && fetch_winehq
 [[ "$FETCH_DOCKER" == "true" ]] && fetch_docker_desktop
@@ -282,7 +261,7 @@ log_info "Target directory: $OFFLINE_REPO_DIR"
 log_info "Offline RPM fetch complete!"
 log_info ""
 log_info "Summary of downloaded packages:"
-for dir in rpmfusion nvidia vscode winehq docker-desktop; do
+for dir in rpmfusion vscode winehq docker-desktop; do
     count=$(find "$OFFLINE_REPO_DIR/$dir" -name "*.rpm" 2>/dev/null | wc -l)
     size=$(du -sh "$OFFLINE_REPO_DIR/$dir" 2>/dev/null | awk '{print $1}')
     printf "  %-20s %3d RPMs  (%s)\n" "$dir:" "$count" "$size"

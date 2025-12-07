@@ -57,6 +57,17 @@ SKIP_EXISTING="${SKIP_EXISTING:-true}"
 ISO_NAME="${ISO_NAME:-}"  # Optional custom ISO name
 ISO_TYPE="${ISO_TYPE:-anaconda-iso}"  # anaconda-iso (interactive, DEFAULT) or iso (non-interactive)
 CONFIG_FILE="${CONFIG_FILE:-config-interactive.toml}"  # TOML config file for Anaconda customization
+CLEAN_OLD_ISO="${CLEAN_OLD_ISO:-true}"  # Remove old ISO files from backup directory (default: true)
+CLEAN_OLD_BACKUPS="${CLEAN_OLD_BACKUPS:-false}"  # Remove old output.prev-* backup directories (default: false)
+
+resolve_path() {
+  # Resolve to absolute path; prefer realpath, fallback to readlink -f
+  if command -v realpath >/dev/null 2>&1; then
+    realpath "$1"
+  else
+    readlink -f "$1"
+  fi
+}
 
 usage() {
   cat <<EOF
@@ -70,16 +81,18 @@ Options (env or flags):
   -r, --rootfs TYPE             Rootfs type for ISO (default: $ROOTFS)
   -b, --builder-image IMAGE     bootc-image-builder image (default: $BUILDER_IMG)
   -f, --fetch-offline           Fetch offline packages before build
-  -p, --packages PACKAGES       Packages to fetch (default: all, or: vscode,nvidia,docker-desktop,etc)
+  -p, --packages PACKAGES       Packages to fetch (default: all, or: vscode,docker-desktop,etc)
   -s, --skip-existing           Skip fetching if packages already exist (default: true)
   --iso-name NAME               Custom output ISO filename (default: install.iso)
   --iso-type TYPE               ISO type: 'anaconda-iso' (interactive, DEFAULT) or 'iso' (non-interactive)
                                 (default: anaconda-iso)
   --config FILE                 TOML config file for bootc-image-builder customizations
                                 (default: config-interactive.toml)
+  --keep-old-iso                Keep old ISO files in backup directory (default: remove them)
+  --clean-old-backups           Remove all old output.prev-* backup directories (default: keep them)
   -h, --help                    Show this help
 
-Environment overrides are honored: TAG, OUTPUT_DIR, OCI_PATH, ROOTFS, BUILDER_IMG, TMPDIR, FETCH_OFFLINE, FETCH_PACKAGES, SKIP_EXISTING, ISO_NAME, ISO_TYPE, CONFIG_FILE
+Environment overrides are honored: TAG, OUTPUT_DIR, OCI_PATH, ROOTFS, BUILDER_IMG, TMPDIR, FETCH_OFFLINE, FETCH_PACKAGES, SKIP_EXISTING, ISO_NAME, ISO_TYPE, CONFIG_FILE, CLEAN_OLD_ISO, CLEAN_OLD_BACKUPS
 
 Examples:
   # Build interactive installer ISO (DEFAULT)
@@ -108,27 +121,63 @@ while [[ ${1:-} ]]; do
     --iso-name) ISO_NAME="$2"; shift 2;;
     --iso-type) ISO_TYPE="$2"; shift 2;;
     --config) CONFIG_FILE="$2"; shift 2;;
+    --keep-old-iso) CLEAN_OLD_ISO="false"; shift;;
+    --clean-old-backups) CLEAN_OLD_BACKUPS="true"; shift;;
     -h|--help) usage; exit 0;;
     *) echo "Unknown arg: $1"; usage; exit 2;;
   esac
 done
 
-# Prepare directories and ensure a clean output area before build
+# Prepare directories and ensure a clean output area before build (non-destructive)
 mkdir -p "$TMPDIR" "$OCI_DIR"
-echo "[prep] Removing output directory $OUTPUT_DIR (if present) ..."
-if ! rm -rf "$OUTPUT_DIR" 2>/dev/null; then
-  echo "[prep] rm without sudo failed; retrying with sudo ..."
-  sudo rm -rf "$OUTPUT_DIR" || true
+if [[ -d "$OUTPUT_DIR" ]]; then
+  if [[ -n "$(ls -A "$OUTPUT_DIR" 2>/dev/null)" ]]; then
+    SAFE_BAK="${OUTPUT_DIR}.prev-$(date +%Y%m%d-%H%M%S)"
+    echo "[prep] Output directory exists; moving to $SAFE_BAK"
+    if mv "$OUTPUT_DIR" "$SAFE_BAK" 2>/dev/null; then
+      # If move succeeded without sudo, try to fix permissions
+      sudo chown -R "$(id -u):$(id -g)" "$SAFE_BAK" 2>/dev/null || true
+    else
+      # Move with sudo and fix permissions
+      sudo mv "$OUTPUT_DIR" "$SAFE_BAK" || true
+      sudo chown -R "$(id -u):$(id -g)" "$SAFE_BAK" 2>/dev/null || true
+    fi
+    
+    # Remove old ISO files from backup to save space (if enabled)
+    if [[ "$CLEAN_OLD_ISO" == "true" ]]; then
+      echo "[prep] Removing old ISO files from $SAFE_BAK ..."
+      find "$SAFE_BAK" -type f -name "*.iso" -exec rm -f {} \; 2>/dev/null || \
+      find "$SAFE_BAK" -type f -name "*.iso" -exec sudo rm -f {} \; 2>/dev/null || true
+    fi
+  else
+    echo "[prep] Removing empty output directory $OUTPUT_DIR ..."
+    rm -rf "$OUTPUT_DIR" 2>/dev/null || sudo rm -rf "$OUTPUT_DIR" || true
+  fi
 fi
+
+# Remove old backup directories (if enabled)
+if [[ "$CLEAN_OLD_BACKUPS" == "true" ]]; then
+  echo "[prep] Cleaning up old backup directories (${OUTPUT_DIR}.prev-*) ..."
+  PARENT_DIR="$(dirname "$OUTPUT_DIR")"
+  BASENAME="$(basename "$OUTPUT_DIR")"
+  find "$PARENT_DIR" -maxdepth 1 -type d -name "${BASENAME}.prev-*" -print0 2>/dev/null | \
+    xargs -0 rm -rf 2>/dev/null || \
+    find "$PARENT_DIR" -maxdepth 1 -type d -name "${BASENAME}.prev-*" -print0 2>/dev/null | \
+    xargs -0 sudo rm -rf 2>/dev/null || true
+  echo "[prep] Old backup directories removed"
+fi
+
 mkdir -p "$OUTPUT_DIR"
 
 # Validate mode configuration
 if [[ "$ISO_TYPE" == "anaconda-iso" ]]; then
-  if [[ ! -f "$CONFIG_FILE" ]]; then
+  if [[ -z "$CONFIG_FILE" || ! -f "$CONFIG_FILE" ]]; then
     echo "[prep] Error: Config file not found: $CONFIG_FILE" >&2
     exit 1
   fi
-  
+
+  CONFIG_FILE=$(resolve_path "$CONFIG_FILE" 2>/dev/null || echo "$CONFIG_FILE")
+
   echo "[prep] Using anaconda-iso (interactive installer) mode - DEFAULT"
   echo "[prep] Config file: $CONFIG_FILE"
 elif [[ "$ISO_TYPE" == "iso" ]]; then
@@ -173,23 +222,38 @@ fi
 # 1) Build image (rootless)
 echo "[1/4] Building image $TAG from $IMAGE_DIR ..."
 STEP_START=$(date +%s)
-TMPDIR="$TMPDIR" podman build --pull=always -t "$TAG" "$IMAGE_DIR"
-STEP_END=$(date +%s)
-echo "[1/4] Build completed in $((STEP_END - STEP_START))s"
+if TMPDIR="$TMPDIR" podman build --pull=always -t "$TAG" "$IMAGE_DIR"; then
+  STEP_END=$(date +%s)
+  echo "[1/4] Build completed in $((STEP_END - STEP_START))s"
+else
+  STEP_END=$(date +%s)
+  echo "[1/4] Build failed after $((STEP_END - STEP_START))s" >&2
+  exit 1
+fi
 
 echo "[2/4] Saving OCI archive to $OCI_PATH ..."
 STEP_START=$(date +%s)
-podman save --format oci-archive -o "$OCI_PATH" "$TAG"
-STEP_END=$(date +%s)
-echo "[2/4] OCI save completed in $((STEP_END - STEP_START))s"
+if podman save --format oci-archive -o "$OCI_PATH" "$TAG"; then
+  STEP_END=$(date +%s)
+  echo "[2/4] OCI save completed in $((STEP_END - STEP_START))s"
+else
+  STEP_END=$(date +%s)
+  echo "[2/4] OCI save failed after $((STEP_END - STEP_START))s" >&2
+  exit 1
+fi
 
 # 3) Load into rootful
 echo "[3/4] Loading image into rootful Podman ..."
 STEP_START=$(date +%s)
-sudo podman load -i "$OCI_PATH"
-sudo podman images | grep -E "^$TAG[[:space:]]" || true
-STEP_END=$(date +%s)
-echo "[3/4] Rootful load completed in $((STEP_END - STEP_START))s"
+if sudo podman load -i "$OCI_PATH"; then
+  sudo podman images | grep -E "^$TAG[[:space:]]" || true
+  STEP_END=$(date +%s)
+  echo "[3/4] Rootful load completed in $((STEP_END - STEP_START))s"
+else
+  STEP_END=$(date +%s)
+  echo "[3/4] Rootful load failed after $((STEP_END - STEP_START))s" >&2
+  exit 1
+fi
 
 # 4) Build ISO with bootc-image-builder
 echo "[4/4] Creating ISO via $BUILDER_IMG ..."

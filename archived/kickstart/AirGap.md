@@ -219,7 +219,7 @@ This installs from embedded Python wheels in `/opt/ml-wheels/`:
 For web development, run the JavaScript installer:
 
 ```bash
-/usr/local/bin/install-js-frameworks.sh
+/usr/local/bin/scvu/install-js-frameworks.sh
 ```
 
 This installs popular JavaScript tools globally:
@@ -420,9 +420,9 @@ REPO_DIR="$PWD/airgap-packages-slim" TIMEOUT_MINUTES=180 bash kickstart/build_is
 - `kickstart/bootc-airgap.ks` - Main air-gapped kickstart (KDE, Docker Desktop, users IAC/AIBUser)
 - `kickstart/prepare_airgap_repo.sh` - Full repo mirror script (Fedora + third-party + ML wheels + Unreal Engine setup)
 - `airgap-packages-full/` - Full repository cache (~15-30 GB + Unreal Engine)
-- `/usr/local/bin/install-ml-packages.sh` - Post-boot ML installer (created during ISO build)
-- `/usr/local/bin/install-js-frameworks.sh` - Post-boot JavaScript frameworks installer
-- `/usr/local/bin/install-unreal-engine.sh` - Post-boot Unreal Engine installer
+- `/usr/local/bin/scvu/install-ml-packages.sh` - Post-boot ML installer (created during ISO build)
+- `/usr/local/bin/scvu/install-js-frameworks.sh` - Post-boot JavaScript frameworks installer
+- `/usr/local/bin/scvu/install-unreal-engine.sh` - Post-boot Unreal Engine installer
 - `/opt/ml-wheels/` - Embedded Python wheels for offline ML installation
 - `/opt/unreal-engine/` - Unreal Engine archive (if manually added)
 

@@ -47,7 +47,7 @@ Build a fully offline, air-gapped installer ISO by embedding a prebuilt bootc co
 - Host OS: Linux (Fedora/RHEL/Ubuntu) or WSL2 on Windows
 - Tools: `podman`, `sudo` for rootful podman, `curl`, `bash`
 - Image builder: pulls `quay.io/centos-bootc/bootc-image-builder:latest` (cache or pre-pull if offline)
-- Disk: 70–130 GB free during build (image ~28 GB, OCI ~15 GB, ISO ~17 GB; add ~20 GB for offline packages)
+- Disk: 70–130 GB free during build (image ~28 GB, OCI ~15 GB, ISO ~14 GB; add ~20 GB for offline packages)
 - Target hardware: 20+ GB disk, 4+ GB RAM, UEFI/BIOS; NVIDIA optional
 
 ## Offline Payloads
@@ -84,7 +84,7 @@ Build a fully offline, air-gapped installer ISO by embedding a prebuilt bootc co
 
 ## Install & Boot Media
 - Write with `dd`, Ventoy, Etcher, or Rufus (DD mode). Fedora Media Writer is unsupported for bootc ISOs.
-- Interactive disk selector: add `rd.bootc.interactive` at GRUB to pick target disk; hide disks with `rd.disk.exclude=/dev/sdX`.
+- Multi-disk safe installation: system prompts to select target disk.
 
 ## Modes: Interactive vs Non-Interactive
 - Non-interactive (default bootc flow): automatic disk select/partition; best for identical hardware and automation.
@@ -93,11 +93,13 @@ Build a fully offline, air-gapped installer ISO by embedding a prebuilt bootc co
 ## Post-Install
 - Run once after first boot:
   ```bash
-  sudo /usr/local/bin/scvu-post-install.sh
+  sudo /usr/local/bin/scvu/scvu-post-install.sh
   ```
-- Does: install VS Code extensions from `/opt/vscode-extensions`, enable `sddm` and `xrdp`, rebuild initramfs if NVIDIA present, ensure user in `docker` group.
-- Default users: `IAC` (admin) and `AIBUser` (standard); passwords `fedora` (change immediately).
-- Optional scripts: `install-ml-packages.sh`, `install-js-frameworks.sh`.
+- Includes cached Python wheel install by default (offline, Python 3.9–3.13).
+- Flags: `--no-wheels` to skip, `--wheels-only` to install wheels only, `--py py310 --py py311` to target versions.
+- Per-step control (combine as needed): `--skip-extensions`, `--skip-readme`, `--skip-services`, `--skip-nvidia`, `--skip-docker`, `--skip-podman`, or `--only-steps extensions,services` to run just listed base steps.
+- scvu-post-install does: install VS Code extensions from `/opt/vscode-extensions`, enable `sddm` and `xrdp`, rebuild initramfs if NVIDIA present, ensure user in `docker` group, and install cached Python wheels from `/opt/python-wheels/py<ver>` if present.
+- Optional script: `scvu/install-js-frameworks.sh`.
 
 ## Updates
 - Status: `bootc status`
@@ -120,7 +122,6 @@ Build a fully offline, air-gapped installer ISO by embedding a prebuilt bootc co
 - Config for interactive ISO: `bootc_ostree/build-scripts/config-interactive.toml`
 - Container build: `bootc_ostree/image/Containerfile`
 - Offline content: `bootc_ostree/image/offline-repo/`, `bootc_ostree/image/vscode-extensions/`
-- Disk selector scripts: `bootc_ostree/image/disk-selector/`
 - Detailed workflow (full text): `bootc_ostree/README.md`
 
 ## Support & Links

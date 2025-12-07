@@ -59,7 +59,7 @@ Packages are saved to `image/offline-repo/<vendor>/` and automatically included 
 
 **Note:** If offline packages are not fetched, the Containerfile will automatically fall back to online installation during build (where available).
 
-**NVIDIA Drivers:** Currently configured to install from RPM Fusion online repository. The offline NVIDIA repo is incomplete (missing `nvidia-kmod-common` and dependencies). To fix the offline repo, run `./fetch-scripts/fix_nvidia_offline.sh` which will download all required NVIDIA packages with dependencies.
+**NVIDIA Drivers:** Installed from RPM Fusion online repository during container build. Offline NVIDIA installation is not supported.
 
 ### Included Software
 
@@ -76,8 +76,9 @@ Packages are saved to `image/offline-repo/<vendor>/` and automatically included 
 - Git, Docker/Podman, OpenShift tools (oc, kubectl)
 - CodeReady Containers (CRC) for local OpenShift
 
-**Gaming:**
-- Lutris (gaming platform with Wine/Proton support)
+**Windows Emulation & Compatibility:**
+- WineHQ (Windows application emulation)
+- Lutris (application/game launcher with Wine/Proton support)
 - Prism Launcher (Minecraft launcher, AppImage)
 
 **Applications:**
@@ -91,7 +92,6 @@ Packages are saved to `image/offline-repo/<vendor>/` and automatically included 
 - FFmpeg, VLC, GIMP, Inkscape, Blender
 
 **System Tools:**
-- Interactive disk selector for multi-drive installations
 - XRDP (remote desktop)
 - Wine/WineHQ (Windows app compatibility)
 - Docker Desktop support
@@ -243,96 +243,44 @@ sudo dd if=/home/$USER/Documents/Bootc_Test/bootc_ostree/output/bootiso/install.
 
 ## Air-gapped Install
 
-### Interactive Installation (Recommended for Multi-Drive Systems)
+### Automated Installation (Single Drive)
 
-The ISO includes an interactive disk selector that runs during boot. To enable it:
-
-1. Boot from the USB/ISO
-2. At the boot menu (GRUB), press 'e' to edit boot parameters
-3. Add `rd.bootc.interactive` to the kernel command line (on the line starting with `linux`)
-4. Press Ctrl+X or F10 to boot
-
-The disk selector will:
-- Display all available disks with sizes
-- Let you choose the target installation disk
-- Ask for confirmation before proceeding
-- **Only the selected disk will be used** - other disks remain untouched
-
-**Example:**
-```
-======================================
-SCVU Bootc Workstation Installer
-======================================
-
-Detecting available disks...
-
-1) /dev/sda (238.5G)
-2) /dev/nvme0n1 (953.9G)
-
-Select disk number (1-2): 2
-
-You selected: /dev/nvme0n1 (953.9G)
-
-WARNING: All data on /dev/nvme0n1 will be ERASED!
-Type 'yes' to confirm: yes
-
-Proceeding with bootc installation...
-```
-
-### Protecting Specific Disks
-
-If you want to ensure certain disks are completely invisible to the installer, add this to the kernel command line:
-
-```
-rd.bootc.interactive rd.disk.exclude=/dev/sda
-```
-
-This will:
-- Hide `/dev/sda` from the disk selector menu
-- Prevent the installer from seeing or using that disk
-- Useful for protecting drives with important data
-
-**Example for multiple disks:**
-```
-rd.bootc.interactive rd.disk.exclude=/dev/sda rd.disk.exclude=/dev/sdb
-```
-
-### Non-Interactive Installation (Single Drive or Automated)
-
-If you don't add the `rd.bootc.interactive` parameter:
-- The installer will automatically select a disk (usually the largest available)
+For single-drive systems or automated deployments:
+- The installer will automatically select the available disk
 - No user interaction required
-- Suitable for single-drive systems or automated deployments
+- Suitable for identical hardware deployments
 
 ### Post-Install Steps
 
 After installation completes and you boot into the system (run once after first boot):
 ```bash
-sudo /usr/local/bin/scvu-post-install.sh
+sudo /usr/local/bin/scvu/scvu-post-install.sh
 ```
-This will:
+`scvu-post-install.sh` will:
 - Install VS Code extensions from `/opt/vscode-extensions` if VS Code is installed
 - Enable `sddm` and `xrdp`, set default to graphical target
 - Rebuild initramfs if NVIDIA drivers are present
 - Ensure current user is in the `docker` group
+- Install cached Python wheels from `/opt/python-wheels/py<ver>` (Python 3.9–3.13) when present
 
-### Creating a Standard User (AIBUser)
-
-The system ships with a default admin user `IAC` who has wheel/sudo privileges.
-
-During Interactive Startup, create an `AIBUser` with no Admin Permissions
+Flags:
+- `--no-wheels` to skip wheel install
+- `--wheels-only` to install wheels without other steps
+- `--py py310 --py py311` to target interpreters
+- Per-step control (can be combined):
+  - `--skip-extensions`, `--skip-readme`, `--skip-services`, `--skip-nvidia`, `--skip-docker`, `--skip-podman`
+  - `--only-steps extensions,services` (comma list) to run just selected base steps
 
 ## Dual Boot & Manual Partitioning Workaround
 
-### Interactive Disk Selection
+### Multi-Drive Installation
 
-For multi-drive systems or when you want to choose the installation disk, use the interactive mode:
+For multi-drive systems or when you want to choose the installation disk:
 
 1. Boot from the ISO
-2. At the GRUB menu, press 'e' to edit boot parameters
-3. Add `rd.bootc.interactive` to the kernel command line
-4. Press Ctrl+X to boot
-5. Select your target disk from the interactive menu
+2. The installer will detect all available disks
+3. You will be prompted to select your target installation disk
+4. Select the correct disk and confirm
 
 ### Dual Boot with Windows
 
@@ -561,14 +509,13 @@ ISO_NAME=SCVU-Standard.iso \
 
 **Note:** Always back up data before resizing partitions. If BitLocker is enabled, suspend it first.
 
-### Scenario 4: Multi-Drive System with Disk Protection
+### Scenario 4: Multi-Drive System
 
-Use the interactive disk selector to choose which disk to install to and protect others:
+The installer automatically detects all available disks and prompts you to select the target:
 
 ```bash
-# During boot, edit GRUB parameters to add:
-rd.bootc.interactive rd.disk.exclude=/dev/sda rd.disk.exclude=/dev/sdb
-# This hides sda and sdb from the installer, only showing nvme0n1
+# Boot from ISO and select target disk from the installer menu
+# System will automatically detect all available disks
 ```
 
 ## File Size Comparison
@@ -669,24 +616,22 @@ After installing from the ISO and first boot, run the consolidated post-install 
 
 ### One-Time Post-Install
 ```bash
-sudo /usr/local/bin/scvu-post-install.sh
+sudo /usr/local/bin/scvu/scvu-post-install.sh
 ```
+Flags:
+- `--no-wheels` to skip wheel install
+- `--wheels-only` to install wheels without other steps
+- `--py py310 --py py311` to target specific interpreters
 
-**What it does:**
-- Installs ML packages from embedded wheels for Python 3.9–3.13
+**What scvu-post-install.sh does:**
 - Installs VS Code extensions from `/opt/vscode-extensions` (if VS Code is installed)
 - Enables `sddm` and `xrdp`, sets default to graphical target
 - Rebuilds initramfs if NVIDIA drivers are present
 - Ensures the current user is in the `docker` group
+- Installs cached Python wheels from `/opt/python-wheels/py<ver>` for Python 3.9–3.13 when present
 
 ### Individual Scripts (Optional)
-- **ML wheels:** `sudo /usr/local/bin/install-ml-packages.sh`
-- **JS frameworks:** `/usr/local/bin/install-js-frameworks.sh`
-
-### Image Users
-- **IAC** (admin, sudo access)
-- **AIBUser** (standard user)
-- **Default password:** `fedora` (change immediately after first login)
+- `/usr/local/bin/scvu/install-js-frameworks.sh`
 
 ### Third-Party Content in Image Build
 
@@ -706,11 +651,11 @@ The `Containerfile` copies and installs them during the build process if present
 
 ### Post-Install Troubleshooting
 
-**ML Install Disk Limits:**
-If ML install hits disk limits, install selected packages manually:
+**ML/Python Install Disk Limits:**
+If the wheel install hits disk limits, install selected packages manually:
 ```bash
-cd /opt/ml-wheels/py313  # or py39, py310, py311, py312
-pip install *.whl
+cd /opt/python-wheels/py313  # or py39, py310, py311, py312
+pip install --no-index --find-links . *.whl
 ```
 
 **Space Issues During Build/Export:**
@@ -758,7 +703,6 @@ nvidia-smi || true
 - `image/Containerfile` — bootc image definition.
 - `image/offline-repo/` — vendor subfolders for RPM payloads.
 - `image/vscode-extensions/` — VSIX files copied into image.
-- `image/disk-selector/` — interactive disk selector scripts and dracut hook.
 - `fetch-scripts/` — per-vendor fetch helpers and fixes (e.g., NVIDIA fix script).
 - `output/` — ISO and logs after build (created on demand).
 - `oci-image/` — exported OCI archives (created on demand).
@@ -781,7 +725,6 @@ nvidia-smi || true
 
 ## Offline Payload Validation
 - List staged RPMs: `find image/offline-repo -type f | wc -l`
-- Check missing NVIDIA deps: run `./fetch-scripts/fix_nvidia_offline.sh` (downloads the full set).
 - Validate VSIX presence: `ls image/vscode-extensions/*.vsix`
 
 ## ISO Verification
@@ -806,6 +749,6 @@ nvidia-smi || true
 ## FAQ (build & install)
 - **Can I customize rootfs type?** Yes, `--rootfs ext4|btrfs|xfs` when composing ISO.
 - **Can I skip building the image and reuse an existing OCI?** Yes, set `OCI_PATH` to a prebuilt archive; script will load and compose.
-- **How to protect disks during install?** Add `rd.bootc.interactive rd.disk.exclude=/dev/sdX` at GRUB.
-- **How to auto-pick the largest disk?** Use non-interactive ISO (default boot flow) without `rd.bootc.interactive`.
+- **How to protect disks during install?** Use the installer's disk selection interface to choose target disk carefully.
+- **How to auto-pick a disk?** The installer automatically selects available disks; for single-drive systems, no selection is needed.
 - **Where are build logs?** `output/iso-build.log` and the terminal transcript from the orchestrator script.

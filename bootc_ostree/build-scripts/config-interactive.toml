@@ -6,5 +6,5 @@ contents = ""
 
 [customizations.kernel]
 # Optional: custom kernel arguments for interactive mode
-# Can include: rd.bootc.interactive, console settings, etc.
+# Can include: console settings, etc.
 # Keep empty to use defaults

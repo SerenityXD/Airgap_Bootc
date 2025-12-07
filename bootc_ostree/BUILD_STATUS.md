@@ -12,11 +12,6 @@
 - ✅ Documentation refresh: added README appendix with build matrix, env flags, offline validation, troubleshooting, and FAQ
 
 ### Recent Changes (December 4, 2025)
-- ✅ Implemented true interactive disk selection via dracut module
-- ✅ Added `rd.bootc.interactive` boot parameter for automatic disk selector
-- ✅ Added `rd.disk.exclude` parameter to protect specific disks from installer
-- ✅ Consolidated disk selector scripts into single `image/disk-selector/` directory
-- ✅ Integrated disk selector into initramfs for early-boot interactivity
 - ✅ Removed unused Anaconda kickstart file (not compatible with bootc-image-builder)
 
 ### Recent Changes (December 3, 2025)
@@ -30,26 +25,16 @@
 - ✅ Custom ISO naming support (`--iso-name` flag)
 
 ### Multi-Drive Installation Safety
-The system now provides multiple ways to ensure safe installation to the correct disk:
+The system provides ways to ensure safe installation to the correct disk:
 
-**Option 1: Interactive Disk Selection (Recommended)**
+**Option 1: Standard Installation**
 ```bash
-# Boot with interactive mode enabled
-# At GRUB menu, press 'e' and add: rd.bootc.interactive
-# Choose target disk from interactive menu
+# Boot normally from GRUB menu
+# Installer will automatically detect available disks
+# Choose target disk when prompted
 ```
 
-**Option 2: Exclude Specific Disks**
-```bash
-# Protect important drives from installer
-# At GRUB menu, add: rd.disk.exclude=/dev/sda rd.disk.exclude=/dev/sdb
-```
 
-**Option 3: Combined Protection**
-```bash
-# Both interactive selection AND disk exclusion
-# At GRUB menu, add: rd.bootc.interactive rd.disk.exclude=/dev/sda
-```
 
 ### Build Process Stages
 1. ✅ Sudo validation and keep-alive setup
@@ -108,7 +93,7 @@ ls -lh /home/benson/Documents/Bootc_Test/bootc_ostree/output/bootiso/
 ✅ **Applications:** LibreOffice, draw.io, Blender, SQLite Browser  
 ✅ **VS Code:** Offline VSIX extensions at `/opt/vscode-extensions/`  
 ✅ **WineHQ:** Stable (offline RPM)  
-✅ **Gaming:** Lutris, Prism Launcher v9.4 AppImage (88 MB)  
+✅ **Windows Emulation:** Lutris, Prism Launcher v9.4 AppImage (88 MB)  
 ✅ **Filesystem Support:** NTFS, exFAT, Btrfs, ext4, XFS, F2FS  
 ✅ **Multimedia:** ffmpeg, vlc, OBS, codec packs (RPM Fusion)  
 ✅ **Web Browsers:** Firefox, Google Chrome (direct RPM download)  
@@ -126,20 +111,20 @@ All third-party packages support offline inclusion (current stash: ~20 GB at `im
 - **Fallback:** Online installation during build if offline packages not present
 
 ### User Accounts (Pre-configured)
-- **Username:** IAC / AIBUser  
-- **Password:** fedora  
-- **Groups:** wheel, docker
+- No default user is baked into the image; create your own account during/after install.
 
 ### Post-Install Steps (After ISO Boot)
-1. Run post-install script: `sudo /usr/local/bin/scvu-post-install.sh`
+1. Run post-install script: `sudo /usr/local/bin/scvu/scvu-post-install.sh`
    - Installs VS Code extensions per-user
    - Rebuilds NVIDIA initramfs (if hardware present)
    - Enables SDDM, xrdp services
    - Adds current user to docker group
+   - Installs cached Python wheels (Python 3.9–3.13) from `/opt/python-wheels/py<ver>` if present
+   - Flags: `--no-wheels` to skip, `--wheels-only` to run only wheels, `--py py310 --py py311` to target interpreters
 
 2. (Optional) Install OpenShift/Kubernetes tools:
    - If pre-fetched with `fetch_openshift_tools.sh`: Already installed
-   - Otherwise: `sudo /usr/local/bin/install-openshift-tools.sh`
+   - Otherwise: `sudo /usr/local/bin/scvu/install-openshift-tools.sh`
 
 3. (Optional) Set up CodeReady Containers:
    - If pre-fetched with `fetch_crc.sh`: Already at `/usr/local/bin/crc`
@@ -147,7 +132,7 @@ All third-party packages support offline inclusion (current stash: ~20 GB at `im
    - See README for fully offline CRC setup
 
 ### Disk Space Usage
-- **Output directory** (ISO + manifests): ~17 GB (current `SCVU.iso`)
+- **Output directory** (ISO + manifests): ~14 GB (current `SCVU.iso`)
 - **OCI archive:** ~15 GB (current `scvu-bootc-kde.oci`)
 - **Container image** (rootless & rootful caches): ~28-35 GB (varies by system)
 - **Offline packages** (actual current): ~20 GB (NVIDIA + RPM Fusion dominate)
@@ -180,7 +165,7 @@ All third-party packages support offline inclusion (current stash: ~20 GB at `im
 - **ISO not found:** Verify path (`bootc_ostree/output/bootiso/`); use `--iso-name` for custom naming
 - **Out of space:** Need at least ~100 GB free for full build with current offline packages
 - **Sudo timeout:** Build script now keeps sudo active; password requested once at start
-- **Disk selection not working:** Ensure `rd.bootc.interactive` is added to kernel command line at GRUB boot menu
+- **Disk selection not working:** Verify the installation is running in interactive mode during boot
 
 ---
 

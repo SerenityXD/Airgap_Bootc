@@ -12,7 +12,7 @@ echo "Fetch All Offline Packages"
 echo "========================================"
 echo ""
 echo "This script will download:"
-echo "  - RPM packages (RPM Fusion, NVIDIA, VS Code, WineHQ, Docker Desktop)"
+echo "  - RPM packages (RPM Fusion, VS Code, WineHQ, Docker Desktop)"
 echo "  - draw.io (diagrams.net)"
 echo "  - OBS Studio (with offline dependencies)"
 echo "  - OpenShift/Kubernetes CLI tools (oc, kubectl)"
@@ -66,9 +66,6 @@ else
     echo "⚠ Script not found: fetch_offline_rpms.sh"
     FAILED+=("RPM Packages")
 fi
-
-# Fix NVIDIA offline repository with complete dependency tree
-run_fetch "fix_nvidia_offline.sh" "NVIDIA Driver Dependencies (Complete)"
 
 # Fetch draw.io
 run_fetch "fetch_drawio.sh" "draw.io"

@@ -70,7 +70,7 @@ sudo dd if=out-airgap/images/boot.iso of=/dev/sdX bs=4M status=progress oflag=sy
 ## Post-install scripts (created by Kickstart)
 
 - `/usr/local/bin/install-ml-packages.sh` — installs ML/AI Python packages from `/opt/ml-wheels/`
-- `/usr/local/bin/install-js-frameworks.sh` — installs Node.js frameworks (React, Vue, Angular, Next.js, etc.)
+- `/usr/local/bin/scvu/install-js-frameworks.sh` — installs Node.js frameworks (React, Vue, Angular, Next.js, etc.)
 - `/usr/local/bin/install-unreal-engine.sh` — extract Unreal Engine tarball if copied to `/opt/unreal-engine/`
 
 ## Troubleshooting

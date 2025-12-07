@@ -26,7 +26,7 @@ RUN sed -i '/^tsflags/ d' /etc/dnf/dnf.conf && echo 'tsflags=nodocs' >> /etc/dnf
     dnf -y clean all && rm -rf /var/cache/dnf
 
 # Install KDE Desktop and base system
-RUN dnf -y install \
+RUN dnf -y --setopt=install_weak_deps=False install \
     # KDE Desktop (skip @core as it's already in base image)
     @kde-desktop-environment @kde-apps \
     sddm filelight \
@@ -54,7 +54,7 @@ RUN systemctl enable avahi-daemon.service && \
     systemctl enable wsdd.service
 
 # Install multimedia and creator tools
-RUN dnf -y install \
+RUN dnf -y --setopt=install_weak_deps=False install \
     # Office and productivity
     libreoffice \
     # GIS
@@ -90,8 +90,8 @@ RUN dnf -y install liberation-fonts && \
     rm -f /tmp/google-chrome.rpm && \
     dnf -y clean all && rm -rf /var/cache/dnf
 
-# Install multiple Python versions with pip
-RUN dnf -y install \
+# Install multiple Python versions with pip available
+RUN dnf -y --setopt=install_weak_deps=False install \
     python3.9 python3.10 python3.11 python3.12 python3.13 \
     # Python ML/data science from Fedora repos
     python3-numpy python3-scipy python3-pandas \
@@ -104,44 +104,57 @@ RUN dnf -y install \
     python3-protobuf python3-grpcio python3-requests \
     && dnf -y clean all && rm -rf /var/cache/dnf
 
-# Install Triton Client libraries via pip (for all Python versions)
-RUN for py in python3.9 python3.10 python3.11 python3.12 python3.13; do \
-    echo "Installing pip packages for $py..."; \
-    $py -m ensurepip --upgrade || (curl -fsSL https://bootstrap.pypa.io/get-pip.py -o /tmp/get-pip.py && $py /tmp/get-pip.py && rm -f /tmp/get-pip.py); \
-    $py -m pip install --no-cache-dir --upgrade pip setuptools wheel && \
-        $py -m pip install --no-cache-dir \
-            tritonclient[all] \
-            numpy scipy pandas \
-            matplotlib scikit-learn \
-            jupyter notebook ipython \
-            seaborn opencv-python \
-            || true; \
+# Download Triton/Python wheels for offline install (no installation during image build)
+# Let pip resolve numpy version automatically to avoid dependency conflicts
+RUN mkdir -p /opt/python-wheels && \
+    for py in python3.9 python3.10 python3.11 python3.12 python3.13; do \
+        echo "Preparing wheels for $py..."; \
+        short=$($py -c 'import sys; print(f"py{sys.version_info.major}{sys.version_info.minor}")'); \
+        dest="/opt/python-wheels/${short}"; \
+        mkdir -p "$dest"; \
+        $py -m ensurepip --upgrade || (curl -fsSL https://bootstrap.pypa.io/get-pip.py -o /tmp/get-pip.py && $py /tmp/get-pip.py && rm -f /tmp/get-pip.py); \
+        $py -m pip install --no-cache-dir --upgrade pip setuptools wheel || true; \
+        for pkg in numpy tritonclient[all] scipy pandas matplotlib scikit-learn jupyter notebook ipython seaborn opencv-python; do \
+            echo "  Downloading $pkg for $py..."; \
+            $py -m pip download --no-cache-dir --only-binary=:all: --dest "$dest" "$pkg" || \
+                echo "  Warning: failed to download $pkg for $py"; \
+        done; \
+        echo "Cleaning up conflicting wheel versions..."; \
+        find "$dest" -name 'numpy-*.whl' | sort -V | tail -n +2 | xargs rm -f || true; \
+        $py -m pip cache purge >/dev/null 2>&1 || true; \
+        echo "Installing wheels system-wide for $py..."; \
+        shopt -s nullglob; \
+        wheels=("$dest"/*.whl); \
+        if [ ${#wheels[@]} -gt 0 ]; then \
+            $py -m pip install --no-cache-dir "${wheels[@]}" 2>&1 | grep -v "already satisfied" || echo "  Installed ${#wheels[@]} packages for $py"; \
+        fi; \
+        shopt -u nullglob; \
     done
 
 # Install Node.js and JavaScript tools
-RUN dnf -y install \
+RUN dnf -y --setopt=install_weak_deps=False install \
     nodejs npm yarn \
     && dnf -y clean all && rm -rf /var/cache/dnf
 
 # Install 3D graphics
-RUN dnf -y install \
+RUN dnf -y --setopt=install_weak_deps=False install \
     blender \
     && dnf -y clean all && rm -rf /var/cache/dnf
 
 # Install database viewers/tools
-RUN dnf -y install \
+RUN dnf -y --setopt=install_weak_deps=False install \
     sqlite sqlite-devel \
     sqlitebrowser \
     && dnf -y clean all && rm -rf /var/cache/dnf
 
 # Filesystem support
-RUN dnf -y install \
+RUN dnf -y --setopt=install_weak_deps=False install \
     ntfs-3g ntfsprogs exfatprogs \
     e2fsprogs btrfs-progs xfsprogs f2fs-tools dosfstools \
     && dnf -y clean all && rm -rf /var/cache/dnf
 
 # Boot and bootloader packages
-RUN dnf -y install \
+RUN dnf -y --setopt=install_weak_deps=False install \
     grub2-pc grub2-pc-modules \
     grub2-efi-x64 grub2-efi-x64-modules grub2-efi-x64-cdboot \
     grub2-efi-ia32 grub2-efi-ia32-cdboot \
@@ -151,63 +164,47 @@ RUN dnf -y install \
     dracut dracut-live \
     && dnf -y clean all && rm -rf /var/cache/dnf
 
-# Create directories for third-party packages
-RUN mkdir -p /tmp/rpms/{nvidia,vscode,rpmfusion,winehq,docker-desktop,drawio} && \
-    mkdir -p /opt/prismlauncher
+# Create directories for third-party packages and staged optional bundles
+RUN mkdir -p /tmp/rpms/{vscode,rpmfusion,winehq,docker-desktop,drawio} && \
+    mkdir -p /opt/prismlauncher /opt/offline/{openshift,crc} && \
+    mkdir -p /usr/local/bin/scvu && \
+    echo 'export PATH="/usr/local/bin/scvu:$PATH"' > /etc/profile.d/scvu-path.sh
 
 # Install OBS Studio and multimedia codecs (offline preferred, online fallback)
 COPY offline-repo/obs/ /tmp/rpms/obs/
 COPY offline-repo/rpmfusion/ /tmp/rpms/rpmfusion/
 RUN if [ -n "$(ls -A /tmp/rpms/obs/*.rpm 2>/dev/null)" ]; then \
         echo "Installing OBS Studio and dependencies from offline repo..."; \
-        dnf -y install --best --skip-broken /tmp/rpms/obs/*.rpm && \
+        dnf -y --setopt=install_weak_deps=False install --best --skip-broken /tmp/rpms/obs/*.rpm && \
         dnf -y clean all && rm -rf /var/cache/dnf && \
         echo "OBS Studio installed successfully from offline packages"; \
     elif [ -n "$(ls -A /tmp/rpms/rpmfusion/*.rpm 2>/dev/null)" ]; then \
         echo "Installing RPM Fusion packages from offline repo..."; \
-        dnf -y install --best --skip-broken /tmp/rpms/rpmfusion/*.rpm && \
+        dnf -y --setopt=install_weak_deps=False install --best --skip-broken /tmp/rpms/rpmfusion/*.rpm && \
         dnf -y clean all && rm -rf /var/cache/dnf && \
         echo "RPM Fusion packages installed"; \
     else \
         echo "Offline OBS/RPM Fusion packages not found, attempting online install..."; \
-        dnf -y install \
+        dnf -y --setopt=install_weak_deps=False install \
             https://download1.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm \
             https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm || true; \
-        dnf -y install --best --skip-broken ffmpeg vlc obs-studio \
+        dnf -y --setopt=install_weak_deps=False install --best --skip-broken ffmpeg vlc obs-studio \
             gstreamer1-plugins-bad-free-extras gstreamer1-plugins-ugly \
             gstreamer1-plugin-openh264 gstreamer1-libav lame x264 x265 && \
         dnf -y clean all && rm -rf /var/cache/dnf || true; \
     fi
 
-# Install NVIDIA drivers (offline preferred, online fallback)
-COPY offline-repo/nvidia/ /tmp/rpms/nvidia/
-RUN if [ -n "$(find /tmp/rpms/nvidia/ -maxdepth 1 -type f -name '*.rpm' 2>/dev/null)" ]; then \
-        echo "Installing NVIDIA drivers from offline repo..."; \
-        dnf -y install /tmp/rpms/nvidia/*.rpm || { \
-            echo "Offline NVIDIA installation failed, falling back to online..."; \
-            dnf -y install \
-                https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm && \
-            dnf -y install --best \
-                akmod-nvidia \
-                xorg-x11-drv-nvidia \
-                xorg-x11-drv-nvidia-cuda \
-                xorg-x11-drv-nvidia-cuda-libs \
-                nvidia-settings \
-                nvidia-persistenced; \
-        }; \
-    else \
-        echo "Offline NVIDIA packages not found, installing from RPM Fusion..."; \
-        dnf -y install \
-            https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm && \
-        dnf -y install --best \
-            akmod-nvidia \
-            xorg-x11-drv-nvidia \
-            xorg-x11-drv-nvidia-cuda \
-            xorg-x11-drv-nvidia-cuda-libs \
-            nvidia-settings \
-            nvidia-persistenced; \
-    fi && \
-    dnf -y clean all && rm -rf /var/cache/dnf /tmp/rpms/nvidia
+# Install NVIDIA drivers from RPM Fusion
+RUN dnf -y --setopt=install_weak_deps=False install \
+        https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm && \
+    dnf -y --setopt=install_weak_deps=False install --best \
+        akmod-nvidia \
+        xorg-x11-drv-nvidia \
+        xorg-x11-drv-nvidia-cuda \
+        xorg-x11-drv-nvidia-cuda-libs \
+        nvidia-settings \
+        nvidia-persistenced && \
+    dnf -y clean all && rm -rf /var/cache/dnf
 
 # Install VS Code (offline preferred, online fallback)
 COPY offline-repo/vscode/ /tmp/rpms/vscode/
@@ -275,12 +272,10 @@ COPY vscode-extensions/*.vsix /opt/vscode-extensions/
 # Post-install scripts folder removed; using consolidated script only
 
 # Include image README inside the system image (alongside helper scripts)
-COPY SCVU-README.md /usr/local/bin/SCVU-README.md
-
-# Remove ML installer script (not used); keep directory only
+COPY SCVU-README.md /usr/local/bin/scvu/SCVU-README.md
 
 # Create JavaScript frameworks installer
-RUN cat > /usr/local/bin/install-js-frameworks.sh <<'EOF'
+RUN cat > /usr/local/bin/scvu/install-js-frameworks.sh <<'EOF'
 #!/bin/bash
 # Install JavaScript frameworks globally
 set -e
@@ -290,102 +285,41 @@ npm install -g create-react-app @vue/cli @angular/cli create-next-app \
   jest mocha eslint prettier pnpm || true
 echo "JavaScript frameworks installed"
 EOF
-RUN chmod +x /usr/local/bin/install-js-frameworks.sh
+RUN chmod +x /usr/local/bin/scvu/install-js-frameworks.sh
 
-# Create OpenShift/Kubernetes CLI installer
-RUN cat > /usr/local/bin/install-openshift-tools.sh <<'EOF'
-#!/bin/bash
-# Install OpenShift and Kubernetes CLI tools
-# These are not available in Fedora repos and require manual download
-set -e
+# Stage OpenShift/Kubernetes CLI tools (copy cache first, then install)
+COPY offline-repo/openshift/ /opt/offline/openshift/
 
-OC_VERSION="latest"  # or specify version like "4.14.0"
-KUBECTL_VERSION="$(curl -L -s https://dl.k8s.io/release/stable.txt 2>/dev/null || echo 'v1.29.0')"
-INSTALL_DIR="/usr/local/bin"
+# Stage CodeReady Containers (CRC) bundle
+COPY offline-repo/crc/ /opt/offline/crc/
 
-echo "======================================"
-echo "OpenShift/Kubernetes CLI Installation"
-echo "======================================"
-echo ""
-
-# Install oc (OpenShift CLI)
-if ! command -v oc &> /dev/null; then
-    echo "Installing oc (OpenShift CLI)..."
-    cd /tmp
-    if [ "$OC_VERSION" = "latest" ]; then
-        OC_URL="https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz"
-    else
-        OC_URL="https://mirror.openshift.com/pub/openshift-v4/clients/ocp/${OC_VERSION}/openshift-client-linux.tar.gz"
-    fi
-    
-    if curl -fL "$OC_URL" -o oc.tar.gz; then
-        tar -xzf oc.tar.gz oc kubectl
-        mv oc "$INSTALL_DIR/"
-        [ -f kubectl ] && mv kubectl "$INSTALL_DIR/"
-        chmod +x "$INSTALL_DIR/oc" "$INSTALL_DIR/kubectl" 2>/dev/null || true
-        rm -f oc.tar.gz README.md
-        echo "✓ oc installed: $(oc version --client 2>/dev/null | head -1)"
-    else
-        echo "✗ Failed to download oc. Check internet connection or try manual download from:"
-        echo "  https://mirror.openshift.com/pub/openshift-v4/clients/ocp/"
-    fi
-else
-    echo "✓ oc already installed: $(oc version --client 2>/dev/null | head -1)"
-fi
-
-# Install kubectl if not already present (oc bundle includes it)
-if ! command -v kubectl &> /dev/null; then
-    echo "Installing kubectl..."
-    cd /tmp
-    if curl -fLO "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"; then
-        chmod +x kubectl
-        mv kubectl "$INSTALL_DIR/"
-        echo "✓ kubectl installed: $(kubectl version --client 2>/dev/null | head -1)"
-    else
-        echo "✗ Failed to download kubectl. Check internet connection."
-    fi
-else
-    echo "✓ kubectl already installed: $(kubectl version --client 2>/dev/null | head -1)"
-fi
-
-echo ""
-echo "======================================"
-echo "Installation Complete"
-echo "======================================"
-echo ""
-echo "Verify installation:"
-echo "  oc version --client"
-echo "  kubectl version --client"
-echo ""
-echo "Connect to a cluster:"
-echo "  oc login https://api.your-cluster.com:6443"
-echo "  kubectl config use-context your-context"
-echo ""
-EOF
-RUN chmod +x /usr/local/bin/install-openshift-tools.sh
-
-# Install OpenShift/Kubernetes CLI tools from offline cache (if present)
-COPY offline-repo/openshift/ /tmp/openshift/
-RUN if [ -f /tmp/openshift/oc ]; then \
-        echo "Installing oc from offline cache..."; \
-        install -m 0755 /tmp/openshift/oc /usr/local/bin/oc; \
-        echo "✓ oc installed from offline cache"; \
+# Install OpenShift/Kubernetes CLI tools from pre-downloaded cache
+RUN OPENSHIFT_DIR="/opt/offline/openshift" && \
+    CRC_DIR="/opt/offline/crc" && \
+    INSTALL_DIR="/usr/local/bin/scvu" && \
+    echo "Installing OpenShift/Kubernetes tools from cache..." && \
+    if [ -f "$OPENSHIFT_DIR/oc" ]; then \
+        install -m 0755 "$OPENSHIFT_DIR/oc" "$INSTALL_DIR/oc" && \
+        echo "✓ oc installed from cache" && \
+        oc version --client 2>/dev/null || true; \
+    else \
+        echo "⚠ oc binary not found in $OPENSHIFT_DIR (optional)"; \
     fi && \
-    if [ -f /tmp/openshift/kubectl ]; then \
-        echo "Installing kubectl from offline cache..."; \
-        install -m 0755 /tmp/openshift/kubectl /usr/local/bin/kubectl; \
-        echo "✓ kubectl installed from offline cache"; \
+    if [ -f "$OPENSHIFT_DIR/kubectl" ]; then \
+        install -m 0755 "$OPENSHIFT_DIR/kubectl" "$INSTALL_DIR/kubectl" && \
+        echo "✓ kubectl installed from cache" && \
+        kubectl version --client 2>/dev/null || true; \
+    else \
+        echo "⚠ kubectl binary not found in $OPENSHIFT_DIR (optional)"; \
     fi && \
-    rm -rf /tmp/openshift
-
-# Install CodeReady Containers (CRC) from offline cache (if present)
-COPY offline-repo/crc/ /tmp/crc/
-RUN if [ -f /tmp/crc/crc ]; then \
-        echo "Installing CRC from offline cache..."; \
-        install -m 0755 /tmp/crc/crc /usr/local/bin/crc; \
-        echo "✓ CRC installed from offline cache: $(crc version 2>/dev/null | head -1 || echo 'version check skipped')"; \
+    if [ -f "$CRC_DIR/crc" ]; then \
+        install -m 0755 "$CRC_DIR/crc" "$INSTALL_DIR/crc" && \
+        echo "✓ crc installed from cache" && \
+        crc version 2>/dev/null || true; \
+    else \
+        echo "⚠ crc binary not found in $CRC_DIR (optional)"; \
     fi && \
-    rm -rf /tmp/crc
+    echo "OpenShift/Kubernetes CLI tools installation complete"
 
 # Copy Triton Server container image (if present) to user share location
 # Users can load it with: podman load -i ~/.local/share/triton/tritonserver-*.tar
@@ -401,35 +335,181 @@ RUN if [ -f /tmp/crc/crc ]; then \
 #     rm -rf /tmp/triton
 
 # Create consolidated post-install script
-RUN cat > /usr/local/bin/scvu-post-install.sh <<'EOF'
+RUN cat > /usr/local/bin/scvu/scvu-post-install.sh <<'EOF'
 #!/bin/bash
-set -e
+set -euo pipefail
 
-echo "SCVU Post-Install: starting"
+CACHE_ROOT="/opt/python-wheels"
+README_SRC="/usr/local/bin/scvu/SCVU-README.md"
 
-# Check if running as root
+usage() {
+cat <<'USAGE'
+Usage: scvu-post-install.sh [options] [user...]
+  --skip-extensions  Skip VS Code extensions
+  --skip-readme      Skip copying README to user desktops
+  --skip-services    Skip enabling GUI services (sddm/xrdp/graphical target)
+  --skip-nvidia      Skip NVIDIA initramfs refresh
+  --skip-docker      Skip adding users to docker group
+  --skip-podman      Skip podman user socket enable
+  --skip-create-user Skip creating AIBUser
+  --only-steps LIST  Run only selected steps (comma-separated). Choices: create-user,extensions,readme,services,nvidia,docker,podman
+  -h, --help         Show this help
+
+Users (optional): if provided, VS Code extensions install only for those users. Defaults to all local users.
+
+Note: Python wheels installed system-wide during build for all users
+USAGE
+}
+
 if [[ $EUID -ne 0 ]]; then
-    echo "Error: This script must be run as root (use: sudo scvu-post-install.sh)"
+    echo "Error: This script must be run as root (use: sudo /usr/local/bin/scvu/scvu-post-install.sh)"
     exit 1
 fi
+
+RUN_BASE=1
+RUN_EXT=1
+RUN_README=1
+RUN_SERVICES=1
+RUN_NVIDIA_STEP=1
+RUN_DOCKER_GROUP=1
+RUN_PODMAN=1
+RUN_CREATE_USER=1
+ONLY_MODE=0
+
+disable_all_base_steps() {
+    RUN_EXT=0
+    RUN_README=0
+    RUN_SERVICES=0
+    RUN_NVIDIA_STEP=0
+    RUN_DOCKER_GROUP=0
+    RUN_PODMAN=0
+    RUN_CREATE_USER=0
+}
+
+normalize_step() {
+    local raw="${1,,}"
+    raw="${raw//-/_}"
+    case "$raw" in
+        create_user|createuser|create_aibuser) echo "create_user" ;;
+        extension|extensions) echo "extensions" ;;
+        readme|desktop_readme|readme_desktop) echo "readme" ;;
+        service|services) echo "services" ;;
+        nvidia|gpu) echo "nvidia" ;;
+        docker|docker_group) echo "docker" ;;
+        podman|podman_socket) echo "podman" ;;
+        *) echo "" ;;
+    esac
+}
+
+select_only_steps() {
+    local list="$1"
+    [[ $ONLY_MODE -eq 0 ]] && disable_all_base_steps
+    ONLY_MODE=1
+
+    IFS=',' read -ra parts <<< "$list"
+    for raw in "${parts[@]}"; do
+        local step
+        step=$(normalize_step "$raw")
+        case "$step" in
+            create_user) RUN_CREATE_USER=1 ;;
+            extensions) RUN_EXT=1 ;;
+            readme) RUN_README=1 ;;
+            services) RUN_SERVICES=1 ;;
+            nvidia) RUN_NVIDIA_STEP=1 ;;
+            docker) RUN_DOCKER_GROUP=1 ;;
+            podman) RUN_PODMAN=1 ;;
+            "") echo "Unknown step: $raw (use: create-user, extensions, readme, services, nvidia, docker, podman)" ;;
+        esac
+    done
+}
+
+declare -a USER_ARGS=()
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --skip-extensions|--no-extensions)
+            RUN_EXT=0; shift ;;
+        --skip-readme|--no-readme)
+            RUN_README=0; shift ;;
+        --skip-services|--no-services)
+            RUN_SERVICES=0; shift ;;
+        --skip-nvidia|--no-nvidia)
+            RUN_NVIDIA_STEP=0; shift ;;
+        --skip-docker|--no-docker|--skip-docker-group)
+            RUN_DOCKER_GROUP=0; shift ;;
+        --skip-podman|--no-podman)
+            RUN_PODMAN=0; shift ;;
+        --skip-create-user|--no-create-user)
+            RUN_CREATE_USER=0; shift ;;
+        --only-steps)
+            [ $# -ge 2 ] || { echo "Missing value for $1"; exit 1; }
+            select_only_steps "$2"; shift 2 ;;
+        --only-steps=*)
+            select_only_steps "${1#*=}"; shift ;;
+        -h|--help)
+            usage; exit 0 ;;
+        *)
+            USER_ARGS+=("$1"); shift ;;
+    esac
+done
+
+echo "SCVU Post-Install: starting"
+step=1
+next_step() { echo "Step $step: $1"; step=$((step+1)); }
+
+create_aibuser() {
+    local AIB_USER="AIBUser"
+    local AIB_HOME="/var/home/$AIB_USER"
+
+    if getent passwd "$AIB_USER" >/dev/null 2>&1; then
+        echo "  User $AIB_USER already exists, skipping creation"
+        return 0
+    fi
+
+    echo "  Creating user $AIB_USER..."
+    if useradd -m -s /bin/bash "$AIB_USER" 2>/dev/null; then
+        echo "  User $AIB_USER created successfully"
+        
+        # Set default password
+        echo -e "A!BUserA!BUser\nA!BUserA!BUser" | passwd "$AIB_USER" 2>/dev/null || true
+        echo "  Password set for $AIB_USER"
+        
+        # Add AIBUser to docker group if docker group exists
+        if getent group docker >/dev/null 2>&1; then
+            usermod -aG docker "$AIB_USER" 2>/dev/null || true
+            echo "  Added $AIB_USER to docker group"
+        fi
+        
+        # Copy README to AIBUser desktop
+        if [ -f "$README_SRC" ]; then
+            mkdir -p "$AIB_HOME/Desktop"
+            cp "$README_SRC" "$AIB_HOME/Desktop/SCVU-README.md"
+            chown "$AIB_USER:$AIB_USER" "$AIB_HOME/Desktop/SCVU-README.md"
+            echo "  Copied README to $AIB_USER Desktop"
+        fi
+    else
+        echo "  Warning: failed to create user $AIB_USER"
+        return 1
+    fi
+}
 
 install_extensions_for_user() {
     local U="$1"
     [ -n "$U" ] || return 0
-    
+
     local HOME_DIR
     HOME_DIR=$(getent passwd "$U" | awk -F: '{print $6}')
     [ -d "$HOME_DIR" ] || { echo "Home not found for $U"; return 0; }
-    
+
     if ! command -v code >/dev/null 2>&1; then
         echo "VS Code not found; skipping for $U"
         return 0
     fi
-    
+
     echo "Installing VS Code extensions for user $U..."
     mkdir -p "$HOME_DIR/.vscode/extensions"
     chown -R "$U":"$U" "$HOME_DIR/.vscode"
-    
+
     for VSIX in /opt/vscode-extensions/*.vsix; do
         [ -f "$VSIX" ] || continue
         echo "  Installing $(basename "$VSIX")"
@@ -437,88 +517,272 @@ install_extensions_for_user() {
     done
 }
 
-# 1) Install VS Code extensions for specified users (args) or all local users
-echo "Step 1: Installing VS Code extensions..."
-if [ "$#" -gt 0 ]; then
-    echo "  For specified users: $*"
-    for U in "$@"; do 
-        install_extensions_for_user "$U"
-    done
-else
-    echo "  For all local users..."
-    mapfile -t USERS < <(getent passwd | awk -F: '$7 !~ /(nologin|false|sync|halt|shutdown)$/ && $6 ~ /^\// {print $1}')
-    echo "  Found ${#USERS[@]} users: ${USERS[*]}"
-    for U in "${USERS[@]}"; do 
-        install_extensions_for_user "$U"
-    done
-fi
+enable_podman_socket_for_user() {
+    local U="$1"
+    local USER_UID
+    USER_UID=$(id -u "$U" 2>/dev/null) || return 0
 
-# 2) Place README on each user's Desktop
-echo "Step 2: Copying README to user desktops..."
-if [ -f /usr/local/bin/SCVU-README.md ]; then
-    mapfile -t USERS < <(getent passwd | awk -F: '$7 !~ /(nologin|false|sync|halt|shutdown)$/ && $6 ~ /^\// {print $1}')
-    echo "  Found ${#USERS[@]} users: ${USERS[*]}"
-    for U in "${USERS[@]}"; do
-        HOME_DIR=$(getent passwd "$U" | awk -F: '{print $6}')
-        [ -d "$HOME_DIR" ] || continue
-        mkdir -p "$HOME_DIR/Desktop"
-        cp /usr/local/bin/SCVU-README.md "$HOME_DIR/Desktop/SCVU-README.md"
-        chown "$U":"$U" "$HOME_DIR/Desktop/SCVU-README.md"
-        echo "  Copied to $U Desktop"
-    done
-else
-    echo "  README not found, skipping"
-fi
+    loginctl enable-linger "$U" >/dev/null 2>&1 || echo "  Note: could not enable linger for $U (requires systemd-logind)"
 
-# 3) Enable services
-echo "Step 3: Enabling GUI services..."
-systemctl enable sddm 2>/dev/null || echo "  Warning: SDDM enable failed"
-systemctl enable xrdp 2>/dev/null || echo "  Warning: XRDP enable failed"
-systemctl set-default graphical.target 2>/dev/null || echo "  Warning: graphical.target set failed"
+    if [ ! -d "/run/user/$USER_UID" ]; then
+        mkdir -p "/run/user/$USER_UID"
+        chown "$USER_UID":"$USER_UID" "/run/user/$USER_UID"
+        chmod 700 "/run/user/$USER_UID"
+    fi
 
-# 4) NVIDIA driver post steps
-echo "Step 4: NVIDIA post-install..."
-if command -v nvidia-smi >/dev/null 2>&1; then
-    echo "  NVIDIA detected; updating initramfs..."
-    if command -v dracut >/dev/null 2>&1; then
-        dracut -f 2>/dev/null || echo "  Warning: dracut update failed"
+    sudo -u "$U" XDG_RUNTIME_DIR="/run/user/$UID" systemctl --user enable --now podman.socket 2>/dev/null || \
+        echo "  Note: Podman user socket setup failed for $U; run after login: systemctl --user enable --now podman.socket"
+}
+
+if (( RUN_BASE )); then
+    next_step "Creating AIBUser..."
+    if (( RUN_CREATE_USER )); then
+        create_aibuser
     else
-        echo "  Warning: dracut not available, skipping initramfs update"
+        echo "  Skipping AIBUser creation (disabled by flag)"
+    fi
+
+    next_step "Installing VS Code extensions..."
+    if (( RUN_EXT )); then
+        if [ ${#USER_ARGS[@]} -gt 0 ]; then
+            echo "  For specified users: ${USER_ARGS[*]}"
+            for U in "${USER_ARGS[@]}"; do
+                install_extensions_for_user "$U"
+            done
+        else
+            echo "  For all local users..."
+            mapfile -t USERS < <(getent passwd | awk -F: '$7 !~ /(nologin|false|sync|halt|shutdown)$/ && $6 ~ /^\// {print $1}')
+            echo "  Found ${#USERS[@]} users: ${USERS[*]}"
+            for U in "${USERS[@]}"; do
+                install_extensions_for_user "$U"
+            done
+        fi
+    else
+        echo "  Skipping VS Code extensions (disabled by flag)"
+    fi
+
+    next_step "Copying README to user desktops..."
+    if (( RUN_README )); then
+        if [ -f "$README_SRC" ]; then
+            mapfile -t USERS < <(getent passwd | awk -F: '$7 !~ /(nologin|false|sync|halt|shutdown)$/ && $6 ~ /^\// {print $1}')
+            echo "  Found ${#USERS[@]} users: ${USERS[*]}"
+            for U in "${USERS[@]}"; do
+                HOME_DIR=$(getent passwd "$U" | awk -F: '{print $6}')
+                [ -d "$HOME_DIR" ] || continue
+                mkdir -p "$HOME_DIR/Desktop"
+                cp "$README_SRC" "$HOME_DIR/Desktop/SCVU-README.md"
+                chown "$U":"$U" "$HOME_DIR/Desktop/SCVU-README.md"
+                echo "  Copied to $U Desktop"
+            done
+        else
+            echo "  README not found, skipping"
+        fi
+    else
+        echo "  Skipping README copy (disabled by flag)"
+    fi
+
+    next_step "Enabling GUI services..."
+    if (( RUN_SERVICES )); then
+        systemctl enable sddm 2>/dev/null || echo "  Warning: SDDM enable failed"
+        systemctl enable xrdp 2>/dev/null || echo "  Warning: XRDP enable failed"
+        systemctl set-default graphical.target 2>/dev/null || echo "  Warning: graphical.target set failed"
+    else
+        echo "  Skipping GUI services enable (disabled by flag)"
+    fi
+
+    next_step "NVIDIA post-install..."
+    if (( RUN_NVIDIA_STEP )); then
+        if command -v nvidia-smi >/dev/null 2>&1; then
+            echo "  NVIDIA detected; updating initramfs..."
+            if command -v dracut >/dev/null 2>&1; then
+                dracut -f 2>/dev/null || echo "  Warning: dracut update failed"
+            else
+                echo "  Warning: dracut not available, skipping initramfs update"
+            fi
+        else
+            echo "  NVIDIA not detected, skipping"
+        fi
+    else
+        echo "  Skipping NVIDIA post-install (disabled by flag)"
+    fi
+
+    next_step "Docker group setup..."
+    if (( RUN_DOCKER_GROUP )); then
+        getent group docker >/dev/null 2>&1 || groupadd -f docker || echo "  Warning: failed to create docker group"
+
+        if getent group docker >/dev/null 2>&1; then
+            mapfile -t USERS < <(getent passwd | awk -F: '$7 !~ /(nologin|false|sync|halt|shutdown)$/ && $6 ~ /^\// {print $1}')
+            echo "  Found ${#USERS[@]} users: ${USERS[*]}"
+            for U in "${USERS[@]}"; do
+                usermod -aG docker "$U" 2>/dev/null || true
+                echo "  Added $U to docker group"
+            done
+        else
+            echo "  Docker group not available, skipping"
+        fi
+    else
+        echo "  Skipping docker group additions (disabled by flag)"
+    fi
+
+    next_step "Podman setup..."
+    if (( RUN_PODMAN )); then
+        mapfile -t USERS < <(getent passwd | awk -F: '$7 !~ /(nologin|false|sync|halt|shutdown)$/ && $6 ~ /^\// {print $1}')
+        echo "  Enabling Podman user socket for: ${USERS[*]}"
+        for U in "${USERS[@]}"; do
+            enable_podman_socket_for_user "$U"
+        done
+    else
+        echo "  Skipping podman socket enable (disabled by flag)"
     fi
 else
-    echo "  NVIDIA not detected, skipping"
+    echo "Error: all base steps disabled"
+    exit 1
 fi
-
-# 5) Docker group setup
-echo "Step 5: Docker group setup..."
-if getent group docker >/dev/null 2>&1; then
-    if [ -n "$SUDO_USER" ]; then
-        usermod -aG docker "$SUDO_USER" 2>/dev/null || true
-        echo "  Added $SUDO_USER to docker group"
-    fi
-else
-    echo "  Docker group not found, skipping"
-fi
-
-# 6) Podman socket activation
-echo "Step 6: Podman setup..."
-systemctl --user enable podman.socket 2>/dev/null || echo "  Note: Podman user socket setup requires per-user execution"
 
 echo ""
-echo "SCVU Post-Install: complete"
+echo "SCVU Post-Install: complete (admin tasks only)"
 echo "Note: Some services may require a reboot to take full effect"
+echo "Python wheels are pre-installed system-wide. Use /usr/local/bin/scvu/install-python-wheels.sh to verify or add user packages"
 EOF
-RUN chmod +x /usr/local/bin/scvu-post-install.sh
+RUN chmod +x /usr/local/bin/scvu/scvu-post-install.sh
 
-# Create docker group and default user
-RUN groupadd -f docker && \
-    useradd -m -G wheel,docker -s /bin/bash IAC 2>/dev/null || true
+RUN cat > /usr/local/bin/scvu/install-python-wheels.sh <<'EOF'
+#!/bin/bash
+set -euo pipefail
 
-# Set passwords
-RUN echo 'root:T@bleTennis0!04' | chpasswd && \
-    echo 'IAC:T@bleTennis0!04' | chpasswd
+CACHE_ROOT="/opt/python-wheels"
 
-# Enable services
+usage() {
+cat <<'USAGE'
+Usage: install-python-wheels.sh [options]
+  --py VERSION       Limit installation to a specific interpreter (repeatable). Examples: py310, python3.11
+  --all              Install for all available Python versions (default)
+  --user             Install to user site-packages (default: system-wide check)
+  -h, --help         Show this help
+
+This script installs pre-downloaded Python wheels from /opt/python-wheels/.
+Python wheels are already installed system-wide for all users.
+Use this script to reinstall or add user-specific packages.
+
+Examples:
+  install-python-wheels.sh                    # Check/verify all Python versions
+  install-python-wheels.sh --py py310 --user  # Reinstall for Python 3.10 (user)
+  install-python-wheels.sh --py py310 --py py311  # Check Python 3.10 and 3.11
+USAGE
+}
+
+normalize_py() {
+    case "$1" in
+        python3.[0-9]*) echo "$1" ;;
+        py39|3.9) echo "python3.9" ;;
+        py310|3.10) echo "python3.10" ;;
+        py311|3.11) echo "python3.11" ;;
+        py312|3.12) echo "python3.12" ;;
+        py313|3.13) echo "python3.13" ;;
+        *) echo "" ;;
+    esac
+}
+
+install_for_py() {
+    local py_cmd="$1"
+    local user_flag="$2"
+    
+    if ! command -v "$py_cmd" >/dev/null 2>&1; then
+        echo "  Skipping $py_cmd (interpreter not installed)"
+        return 0
+    fi
+
+    local short dest
+    short=$("$py_cmd" -c 'import sys; print(f"py{sys.version_info.major}{sys.version_info.minor}")')
+    dest="${CACHE_ROOT}/${short}"
+
+    if [ ! -d "$dest" ]; then
+        echo "  Skipping $py_cmd (no cache at $dest)"
+        return 0
+    fi
+
+    shopt -s nullglob
+    local wheels=("$dest"/*.whl)
+    if [ ${#wheels[@]} -eq 0 ]; then
+        echo "  Skipping $py_cmd (no wheels in $dest)"
+        shopt -u nullglob
+        return 0
+    fi
+
+    echo "  Checking ${#wheels[@]} packages for $py_cmd..."
+    
+    # Check if packages are already installed
+    local install_args="--no-cache-dir --no-index --find-links $dest"
+    if [ "$user_flag" = "true" ]; then
+        install_args="$install_args --user"
+        echo "  Installing to user site-packages..."
+    else
+        echo "  Verifying system installation (already installed during build)..."
+    fi
+    
+    "$py_cmd" -m pip install $install_args "${wheels[@]}" 2>&1 | grep -v "already satisfied" || echo "  ✓ All packages available for $py_cmd"
+    shopt -u nullglob
+}
+
+declare -a WHEEL_SELECTORS=()
+USER_INSTALL="false"
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --py|--python)
+            [ $# -ge 2 ] || { echo "Missing value for $1"; exit 1; }
+            WHEEL_SELECTORS+=("$2"); shift 2 ;;
+        --py=*|--python=*)
+            WHEEL_SELECTORS+=("${1#*=}"); shift ;;
+        --all)
+            WHEEL_SELECTORS=(); shift ;;
+        --user)
+            USER_INSTALL="true"; shift ;;
+        -h|--help)
+            usage; exit 0 ;;
+        *)
+            echo "Unknown option: $1"; usage; exit 1 ;;
+    esac
+done
+
+if [ ! -d "$CACHE_ROOT" ]; then
+    echo "Error: No python wheel cache found at $CACHE_ROOT"
+    exit 1
+fi
+
+echo "SCVU Python Wheels: Python packages installed system-wide during build"
+echo "Checking installation from $CACHE_ROOT..."
+
+selectors=()
+if [ ${#WHEEL_SELECTORS[@]} -gt 0 ]; then
+    selectors=("${WHEEL_SELECTORS[@]}")
+else
+    selectors=(python3.9 python3.10 python3.11 python3.12 python3.13)
+fi
+
+echo "Checking interpreters: ${selectors[*]}"
+any=0
+for sel in "${selectors[@]}"; do
+    py_cmd=$(normalize_py "$sel")
+    if [ -z "$py_cmd" ]; then
+        echo "Unknown Python selector: $sel (use python3.10 or py310)"
+        continue
+    fi
+    install_for_py "$py_cmd" "$USER_INSTALL"
+    any=1
+done
+
+if [ $any -eq 0 ]; then
+    echo "No interpreters installed or selected."
+    exit 1
+fi
+
+echo ""
+echo "SCVU Python Wheels: verification complete"
+EOF
+RUN chmod +x /usr/local/bin/scvu/install-python-wheels.sh
+
+# Enable services (set default in image; post-install script re-runs for explicit confirmation)
 RUN systemctl enable sddm || true && \
     systemctl enable xrdp || true && \
     systemctl set-default graphical.target || true
@@ -528,14 +792,27 @@ RUN cat > /etc/skel/README.txt <<'EOF'
 Welcome to SCVU Bootc Workstation
 ==================================
 
-Users:
-- IAC (admin, sudo access)
+Pre-installed tools:
+- oc (OpenShift CLI) - available as: oc
+- kubectl (Kubernetes CLI) - available as: kubectl
+- crc (CodeReady Containers) - available as: crc (if pre-cached)
 
 Post-install tasks:
-1. Run consolidated post install: sudo /usr/local/bin/scvu-post-install.sh
-2. Install JS frameworks: /usr/local/bin/install-js-frameworks.sh
+1. Run consolidated post install (admin tasks): sudo /usr/local/bin/scvu/scvu-post-install.sh
+    - Skip wheels: sudo /usr/local/bin/scvu/scvu-post-install.sh --no-wheels
+    - Per-step skips: add --skip-extensions/--skip-readme/--skip-services/--skip-nvidia/--skip-docker/--skip-podman
+    - Only selected steps: sudo /usr/local/bin/scvu/scvu-post-install.sh --only-steps extensions,readme,services,nvidia,docker,podman
 
-All users are in the docker group for Docker Desktop.
+2. Python wheels are pre-installed system-wide for all users
+    - Verify installation: /usr/local/bin/scvu/install-python-wheels.sh
+    - Add user packages: /usr/local/bin/scvu/install-python-wheels.sh --py py310 --user
+
+3. Install JS frameworks: /usr/local/bin/scvu/install-js-frameworks.sh
+
+Quick start:
+- Check OpenShift tools: oc version && kubectl version
+- SSH/RDP into the system from another machine (XRDP configured)
+- Install Python wheels per-user when needed
 EOF
 
 # Bootc configuration
