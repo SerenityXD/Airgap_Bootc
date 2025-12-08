@@ -66,7 +66,10 @@ Packages are saved to `image/offline-repo/<vendor>/` and automatically included 
 **Pre-configured System Settings:**
 - Timezone: Asia/Singapore
 - NTP servers: time.windows.com (primary), time.nist.gov, pool.ntp.org
-- Network discovery: Samba, Avahi (mDNS), wsdd (WS-Discovery for Windows)
+- Windows Network Discovery: Full Samba server with NetBIOS (smb/nmb), Avahi (mDNS), and wsdd (WS-Discovery)
+  - Makes Linux machine visible in Windows Network Neighborhood
+  - Workgroup: WORKGROUP, NetBIOS name: SCVU-BOOTC
+  - Compatible with Windows 7-11, macOS, and other Linux systems
 
 **Development Tools:**
 - VS Code, Visual Studio Code (flatpak)

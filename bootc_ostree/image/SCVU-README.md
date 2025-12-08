@@ -3,6 +3,16 @@ SCVU Bootc Workstation - Quick Notes
 Full documentation: `/usr/local/share/doc/scvu/README.md` (inside the OS) or `bootc_ostree/README.md` (repo root).
 
 
+Windows Network Discovery
+- Samba server: enabled for Windows network visibility (smb.service, nmb.service)
+- Avahi: mDNS/DNS-SD for modern Windows 10/11 and macOS discovery
+- wsdd: WS-Discovery protocol for Windows 10+ network computers list
+- Configuration: `/etc/samba/smb.conf` (workgroup: WORKGROUP, netbios: SCVU-BOOTC)
+- Check status: `systemctl status smb nmb avahi-daemon wsdd`
+- View in Windows: Open File Explorer → Network → Look for "SCVU-BOOTC"
+- Note: Firewall must allow ports 137-139/udp, 445/tcp, 5353/udp (mDNS)
+
+
 Post-install checks
 - NVIDIA: `nvidia-smi` (after reboot into installed system) to confirm driver `580.95.05`. Kernel modules are pre-built at image creation time for bootc's read-only filesystem.
 - VS Code: `code --version`; offline package was installed when present, otherwise from Microsoft repo.
