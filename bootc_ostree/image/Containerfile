@@ -599,8 +599,14 @@ if (( RUN_BASE )); then
     next_step "NVIDIA post-install..."
     if (( RUN_NVIDIA_STEP )); then
         if command -v nvidia-smi >/dev/null 2>&1; then
-            echo "  NVIDIA detected; updating initramfs..."
-            if command -v dracut >/dev/null 2>&1; then
+            echo "  NVIDIA detected; checking initramfs update..."
+            # In bootc/ostree systems, initramfs is managed by bootc and regenerated during upgrades
+            # Manual dracut may fail due to read-only /boot
+            if [ -f /run/ostree-booted ]; then
+                echo "  Running on bootc/ostree system - initramfs will be regenerated on next 'bootc upgrade'"
+                echo "  To apply NVIDIA driver changes now, run: sudo bootc upgrade && sudo reboot"
+            elif command -v dracut >/dev/null 2>&1; then
+                echo "  Updating initramfs with dracut..."
                 dracut -f 2>/dev/null || echo "  Warning: dracut update failed"
             else
                 echo "  Warning: dracut not available, skipping initramfs update"
