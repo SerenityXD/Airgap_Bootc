@@ -216,9 +216,9 @@ RUN if [ -f /usr/sbin/akmods ]; then \
             echo "$KERNEL_VERSIONS"; \
             if akmods --force; then \
                 echo "NVIDIA kernel modules built successfully for all kernels"; \
-                echo "Regenerating initramfs with NVIDIA modules..."; \
-                dracut -f --regenerate-all && echo "Initramfs regeneration complete" || \
-                echo "Warning: dracut regeneration failed, NVIDIA may not load at boot"; \
+                echo "Regenerating initramfs for all kernels with NVIDIA modules..."; \
+                dracut -f --regenerate-all && echo "Initramfs regeneration complete for all kernels" || \
+                echo "Warning: dracut regeneration failed for one or more kernels, NVIDIA may not load at boot"; \
             else \
                 echo "Warning: akmods failed to build NVIDIA modules"; \
                 echo "NVIDIA drivers may not function properly in the installed system"; \
