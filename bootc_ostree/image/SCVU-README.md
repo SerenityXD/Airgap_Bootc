@@ -8,7 +8,8 @@ Windows Network Discovery
 - **From Windows to Linux**: Samba server (smb/nmb services) makes Linux visible in Windows Network
 - **From Linux to Windows**: KDE Dolphin with kio-extras can browse Windows shares (smb:// protocol)
 - Avahi: mDNS/DNS-SD for modern Windows 10/11 and macOS discovery (both directions)
-- wsdd: WS-Discovery protocol for Windows 10+ network computers list (both directions)
+- wsdd: WS-Discovery protocol makes Linux visible to Windows 10+ network computers list
+- Samba client: nmblookup and smbclient tools for discovering and browsing Windows shares from Linux
 - Configuration: `/etc/samba/smb.conf` (workgroup: WORKGROUP, netbios: SCVU-BOOTC)
 - Check status: `systemctl status smb nmb avahi-daemon wsdd`
 - **Browse Windows from Linux**: 

@@ -118,7 +118,7 @@ RUN mkdir -p /etc/avahi/services && \
   <service>
     <type>_device-info._tcp</type>
     <port>0</port>
-    <txt-record>model=RackMac</txt-record>
+    <txt-record>model=LinuxWorkstation</txt-record>
   </service>
 </service-group>
 EOF
