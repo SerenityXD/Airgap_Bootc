@@ -4,7 +4,7 @@ Full documentation: `/usr/local/share/doc/scvu/README.md` (inside the OS) or `bo
 
 
 Post-install checks
-- NVIDIA: `nvidia-smi` (after reboot into installed system) to confirm driver `580.95.05`; run `sudo akmods --force --kernel $(uname -r)` if modules need rebuilding.
+- NVIDIA: `nvidia-smi` (after reboot into installed system) to confirm driver `580.95.05`. Kernel modules are pre-built at image creation time for bootc's read-only filesystem.
 - VS Code: `code --version`; offline package was installed when present, otherwise from Microsoft repo.
 - WineHQ + Lutris: `wine --version` and `lutris --version` to verify Windows emulation support.
 - Docker Desktop: launch from the app menu or run `systemctl --user status docker-desktop` to confirm it starts; CLI tools are available via `docker` and `docker-compose`.

@@ -59,7 +59,7 @@ Packages are saved to `image/offline-repo/<vendor>/` and automatically included 
 
 **Note:** If offline packages are not fetched, the Containerfile will automatically fall back to online installation during build (where available).
 
-**NVIDIA Drivers:** Installed from RPM Fusion online repository during container build. Offline NVIDIA installation is not supported.
+**NVIDIA Drivers:** Installed from RPM Fusion online repository during container build. Kernel modules are built at image creation time to support bootc's read-only filesystem. Offline NVIDIA installation is not supported.
 
 ### Included Software
 

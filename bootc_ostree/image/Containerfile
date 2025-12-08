@@ -206,6 +206,14 @@ RUN dnf -y --setopt=install_weak_deps=False install \
         nvidia-persistenced && \
     dnf -y clean all && rm -rf /var/cache/dnf
 
+# Build NVIDIA kernel modules at container build time for bootc read-only filesystem
+# This prevents runtime akmods failures on immutable /usr
+RUN if [ -f /usr/sbin/akmods ]; then \
+        echo "Building NVIDIA kernel modules for installed kernel(s)..."; \
+        akmods --force --kernels $(rpm -q kernel --qf '%{VERSION}-%{RELEASE}.%{ARCH}\n') || \
+        echo "Warning: akmods build failed, modules may need manual rebuild"; \
+    fi
+
 # Install VS Code (offline preferred, online fallback)
 COPY offline-repo/vscode/ /tmp/rpms/vscode/
 RUN if [ -n "$(find /tmp/rpms/vscode/ -maxdepth 1 -type f -name '*.rpm' 2>/dev/null)" ]; then \
