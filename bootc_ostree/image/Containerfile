@@ -210,8 +210,10 @@ RUN dnf -y --setopt=install_weak_deps=False install \
 # This prevents runtime akmods failures on immutable /usr
 RUN if [ -f /usr/sbin/akmods ]; then \
         echo "Building NVIDIA kernel modules for installed kernel(s)..."; \
-        akmods --force --kernels $(rpm -q kernel --qf '%{VERSION}-%{RELEASE}.%{ARCH}\n') || \
-        echo "Warning: akmods build failed, modules may need manual rebuild"; \
+        akmods --force --kernels $(rpm -q kernel --qf '%{VERSION}-%{RELEASE}.%{ARCH}\n') && \
+        echo "Regenerating initramfs with NVIDIA modules..."; \
+        dracut -f --regenerate-all || \
+        echo "Warning: akmods/dracut build failed, modules may need manual rebuild"; \
     fi
 
 # Install VS Code (offline preferred, online fallback)
