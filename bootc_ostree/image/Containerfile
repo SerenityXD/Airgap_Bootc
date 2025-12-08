@@ -210,11 +210,12 @@ RUN dnf -y --setopt=install_weak_deps=False install \
 # This prevents runtime akmods failures on immutable /usr
 RUN if [ -f /usr/sbin/akmods ]; then \
         echo "Building NVIDIA kernel modules for installed kernel(s)..."; \
-        KERNEL_VERSIONS=$(rpm -q kernel --qf '%{VERSION}-%{RELEASE}.%{ARCH}\n' 2>/dev/null | head -1); \
+        KERNEL_VERSIONS=$(rpm -q kernel --qf '%{VERSION}-%{RELEASE}.%{ARCH}\n' 2>/dev/null); \
         if [ -n "$KERNEL_VERSIONS" ]; then \
-            echo "Found kernel version(s): $KERNEL_VERSIONS"; \
-            if akmods --force --kernels "$KERNEL_VERSIONS"; then \
-                echo "NVIDIA kernel modules built successfully"; \
+            echo "Found kernel version(s):"; \
+            echo "$KERNEL_VERSIONS"; \
+            if akmods --force; then \
+                echo "NVIDIA kernel modules built successfully for all kernels"; \
                 echo "Regenerating initramfs with NVIDIA modules..."; \
                 dracut -f --regenerate-all && echo "Initramfs regeneration complete" || \
                 echo "Warning: dracut regeneration failed, NVIDIA may not load at boot"; \
