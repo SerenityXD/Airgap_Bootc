@@ -47,6 +47,8 @@ RUN dnf -y --setopt=install_weak_deps=False install \
     samba samba-client samba-common cifs-utils \
     avahi avahi-tools nss-mdns \
     wsdd \
+    # KDE SMB/Windows network browsing support
+    kio-extras kdenetwork-filesharing \
     && dnf -y clean all && rm -rf /var/cache/dnf
 
 # Enable network discovery services
@@ -66,10 +68,15 @@ RUN mkdir -p /etc/samba && \
    map to guest = Bad User
    dns proxy = no
    
-   # Network discovery settings
+   # Network discovery settings (server side - be visible to Windows)
    local master = yes
    preferred master = yes
    os level = 35
+   
+   # Client browsing settings (discover Windows machines)
+   name resolve order = bcast host lmhosts wins
+   client use spnego = yes
+   client ntlmv2 auth = yes
    
    # Enable WSD/LLMNR for Windows 10+ discovery
    multicast dns register = yes
@@ -81,6 +88,10 @@ RUN mkdir -p /etc/samba && \
    # Performance and compatibility
    server min protocol = SMB2
    client min protocol = SMB2
+   
+   # Allow browsing of Windows workgroups and computers
+   remote browse sync = yes
+   remote announce = 255.255.255.255/WORKGROUP
    
 # Example share (commented out - users can enable as needed)
 # [Public]
