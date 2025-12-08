@@ -44,14 +44,84 @@ RUN dnf -y --setopt=install_weak_deps=False install \
     # Remote desktop
     xrdp xorgxrdp \
     # Windows network discovery and file sharing
-    samba-client samba-common cifs-utils \
+    samba samba-client samba-common cifs-utils \
     avahi avahi-tools nss-mdns \
     wsdd \
+    # KDE SMB/Windows network browsing support
+    kio-extras kdenetwork-filesharing \
     && dnf -y clean all && rm -rf /var/cache/dnf
 
 # Enable network discovery services
 RUN systemctl enable avahi-daemon.service && \
-    systemctl enable wsdd.service
+    systemctl enable wsdd.service && \
+    systemctl enable smb.service && \
+    systemctl enable nmb.service
+
+# Configure Samba for Windows network discovery
+RUN mkdir -p /etc/samba && \
+    cat > /etc/samba/smb.conf <<'EOF'
+[global]
+   workgroup = WORKGROUP
+   server string = SCVU Bootc Workstation
+   netbios name = SCVU-BOOTC
+   security = user
+   map to guest = Bad User
+   dns proxy = no
+   
+   # Network discovery settings (server side - be visible to Windows)
+   local master = yes
+   preferred master = yes
+   os level = 35
+   
+   # Client browsing settings (discover Windows machines)
+   name resolve order = bcast host lmhosts wins
+   client use spnego = yes
+   client ntlmv2 auth = yes
+   
+   # Enable WSD/LLMNR for Windows 10+ discovery
+   multicast dns register = yes
+   
+   # Logging
+   log file = /var/log/samba/log.%m
+   max log size = 50
+   
+   # Performance and compatibility
+   server min protocol = SMB2
+   client min protocol = SMB2
+   
+   # Allow browsing of Windows workgroups and computers
+   remote browse sync = yes
+   remote announce = 255.255.255.255/WORKGROUP
+   
+# Example share (commented out - users can enable as needed)
+# [Public]
+#    comment = Public Share
+#    path = /srv/samba/public
+#    browseable = yes
+#    read only = no
+#    guest ok = yes
+#    create mask = 0644
+#    directory mask = 0755
+EOF
+
+# Create Avahi service file for SMB/CIFS advertisement
+RUN mkdir -p /etc/avahi/services && \
+    cat > /etc/avahi/services/smb.service <<'EOF'
+<?xml version="1.0" standalone='no'?>
+<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
+<service-group>
+  <name replace-wildcards="yes">%h</name>
+  <service>
+    <type>_smb._tcp</type>
+    <port>445</port>
+  </service>
+  <service>
+    <type>_device-info._tcp</type>
+    <port>0</port>
+    <txt-record>model=LinuxWorkstation</txt-record>
+  </service>
+</service-group>
+EOF
 
 # Install multimedia and creator tools
 RUN dnf -y --setopt=install_weak_deps=False install \

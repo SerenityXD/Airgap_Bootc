@@ -66,7 +66,12 @@ Packages are saved to `image/offline-repo/<vendor>/` and automatically included 
 **Pre-configured System Settings:**
 - Timezone: Asia/Singapore
 - NTP servers: time.windows.com (primary), time.nist.gov, pool.ntp.org
-- Network discovery: Samba, Avahi (mDNS), wsdd (WS-Discovery for Windows)
+- Windows Network Discovery (Bidirectional): Full Samba server with NetBIOS (smb/nmb), Avahi (mDNS), and wsdd (WS-Discovery)
+  - **Linux visible to Windows**: Full Samba server makes Linux appear in Windows Network Neighborhood
+  - **Linux can discover Windows**: KDE Dolphin with SMB support can browse Windows shares (smb:// protocol)
+  - Workgroup: WORKGROUP, NetBIOS name: SCVU-BOOTC
+  - Compatible with Windows 7-11, macOS, and other Linux systems
+  - Tools: smbclient for command-line browsing, kio-extras for KDE GUI browsing
 
 **Development Tools:**
 - VS Code, Visual Studio Code (flatpak)
