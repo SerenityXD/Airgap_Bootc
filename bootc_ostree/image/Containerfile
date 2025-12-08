@@ -759,10 +759,10 @@ if (( RUN_BASE )); then
             
             # Load NVIDIA modules
             echo "  Loading NVIDIA kernel modules..."
-            modprobe nvidia 2>/dev/null || echo "  Note: nvidia module load will complete after reboot"
-            modprobe nvidia_modeset 2>/dev/null || true
-            modprobe nvidia_uvm 2>/dev/null || true
-            modprobe nvidia_drm 2>/dev/null || true
+            modprobe nvidia 2>/dev/null || echo "  Note: nvidia module will load after reboot"
+            modprobe nvidia_modeset 2>/dev/null || echo "  Note: nvidia_modeset will load after reboot"
+            modprobe nvidia_uvm 2>/dev/null || echo "  Note: nvidia_uvm will load after reboot"
+            modprobe nvidia_drm 2>/dev/null || echo "  Note: nvidia_drm will load after reboot"
             
             # Check if modules loaded
             if lsmod | grep -q nvidia; then
@@ -776,7 +776,13 @@ if (( RUN_BASE )); then
             echo "  Updating initramfs with NVIDIA modules..."
             if command -v dracut >/dev/null 2>&1; then
                 echo "  Running dracut to rebuild initramfs..."
-                dracut -f --kver "$(uname -r)" 2>&1 | head -20 || echo "  Warning: dracut update failed, but will retry on next boot"
+                if dracut -f --kver "$(uname -r)" 2>&1 | tee /tmp/dracut-nvidia.log; then
+                    echo "  ✓ dracut completed successfully"
+                else
+                    echo "  ⚠ dracut encountered errors (see /tmp/dracut-nvidia.log)"
+                    echo "  This may be normal on first run; reboot will trigger automatic rebuild"
+                    tail -20 /tmp/dracut-nvidia.log
+                fi
             else
                 echo "  Warning: dracut not available, skipping initramfs update"
             fi
