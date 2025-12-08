@@ -101,6 +101,25 @@ Build a fully offline, air-gapped installer ISO by embedding a prebuilt bootc co
 - scvu-post-install does: install VS Code extensions from `/opt/vscode-extensions`, enable `sddm` and `xrdp`, rebuild initramfs if NVIDIA present, ensure user in `docker` group, and install cached Python wheels from `/opt/python-wheels/py<ver>` if present.
 - Optional script: `scvu/install-js-frameworks.sh`.
 
+## NVIDIA GPU Support
+- NVIDIA drivers (kmod-nvidia and akmod-nvidia) are pre-installed
+- **Important**: Drivers require a reboot to fully activate after first installation
+- After reboot, verify drivers with:
+  ```bash
+  nvidia-smi
+  lsmod | grep nvidia
+  ```
+- Diagnostic script for troubleshooting:
+  ```bash
+  /usr/local/bin/scvu/nvidia-check.sh
+  ```
+- If drivers don't load after reboot, run:
+  ```bash
+  sudo /usr/local/bin/scvu/scvu-post-install.sh --only-steps nvidia
+  sudo reboot
+  ```
+- NVIDIA modules are automatically loaded at boot via systemd service and modules-load.d configuration
+
 ## Updates
 - Status: `bootc status`
 - Update current image: `sudo bootc upgrade && sudo reboot`

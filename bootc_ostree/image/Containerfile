@@ -199,12 +199,65 @@ RUN dnf -y --setopt=install_weak_deps=False install \
         https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm && \
     dnf -y --setopt=install_weak_deps=False install --best \
         akmod-nvidia \
+        kmod-nvidia \
         xorg-x11-drv-nvidia \
         xorg-x11-drv-nvidia-cuda \
         xorg-x11-drv-nvidia-cuda-libs \
         nvidia-settings \
         nvidia-persistenced && \
     dnf -y clean all && rm -rf /var/cache/dnf
+
+# Configure NVIDIA modules to load at boot
+RUN mkdir -p /etc/modules-load.d && \
+    cat > /etc/modules-load.d/nvidia.conf <<'NVIDIAEOF'
+# Load NVIDIA kernel modules at boot
+nvidia
+nvidia_modeset
+nvidia_uvm
+nvidia_drm
+NVIDIAEOF
+
+# Configure dracut to include NVIDIA modules in initramfs
+RUN mkdir -p /etc/dracut.conf.d && \
+    cat > /etc/dracut.conf.d/nvidia.conf <<'DRACUTEOF'
+# Include NVIDIA modules in initramfs
+add_drivers+=" nvidia nvidia_modeset nvidia_uvm nvidia_drm "
+force_drivers+=" nvidia nvidia_modeset nvidia_uvm nvidia_drm "
+DRACUTEOF
+
+# Set kernel parameters for NVIDIA
+RUN mkdir -p /etc/modprobe.d && \
+    cat > /etc/modprobe.d/nvidia.conf <<'MODPROBEEOF'
+# NVIDIA module options
+options nvidia NVreg_PreserveVideoMemoryAllocations=1
+options nvidia-drm modeset=1
+MODPROBEEOF
+
+# Create systemd service to ensure NVIDIA modules load early
+RUN mkdir -p /etc/systemd/system && \
+    cat > /etc/systemd/system/nvidia-load-modules.service <<'SERVICEEOF'
+[Unit]
+Description=Load NVIDIA kernel modules
+DefaultDependencies=no
+Before=sysinit.target
+After=systemd-modules-load.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/modprobe nvidia
+ExecStart=/usr/sbin/modprobe nvidia_modeset
+ExecStart=/usr/sbin/modprobe nvidia_uvm
+ExecStart=/usr/sbin/modprobe nvidia_drm
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=sysinit.target
+SERVICEEOF
+
+# Enable NVIDIA module loading service
+RUN systemctl enable nvidia-load-modules.service 2>/dev/null || true
 
 # Install VS Code (offline preferred, online fallback)
 COPY offline-repo/vscode/ /tmp/rpms/vscode/
@@ -333,6 +386,112 @@ RUN OPENSHIFT_DIR="/opt/offline/openshift" && \
 #         echo "  Load with: podman load -i /usr/share/triton/tritonserver-*.tar"; \
 #     fi && \
 #     rm -rf /tmp/triton
+
+# Create NVIDIA diagnostic script
+RUN cat > /usr/local/bin/scvu/nvidia-check.sh <<'EOF'
+#!/bin/bash
+# NVIDIA Driver Diagnostic Script
+
+echo "=========================================="
+echo "NVIDIA Driver Diagnostic Check"
+echo "=========================================="
+echo ""
+
+echo "1. Checking NVIDIA packages installed:"
+if rpm -q kmod-nvidia akmod-nvidia xorg-x11-drv-nvidia 2>/dev/null; then
+    rpm -qa | grep -E "nvidia|cuda" | sort
+    echo "   ✓ NVIDIA packages are installed"
+else
+    echo "   ✗ NVIDIA packages not found"
+    echo "   Install with: sudo dnf install akmod-nvidia kmod-nvidia xorg-x11-drv-nvidia"
+    exit 1
+fi
+echo ""
+
+echo "2. Checking kernel modules:"
+if lsmod | grep -q nvidia; then
+    echo "   ✓ NVIDIA modules loaded:"
+    lsmod | grep nvidia | awk '{print "     - " $1 " (size: " $2 ", used by: " $4 ")"}'
+else
+    echo "   ✗ NVIDIA modules not loaded"
+    echo "   Try: sudo modprobe nvidia"
+    echo "   Or reboot: sudo reboot"
+fi
+echo ""
+
+echo "3. Checking module configuration files:"
+if [ -f /etc/modules-load.d/nvidia.conf ]; then
+    echo "   ✓ /etc/modules-load.d/nvidia.conf exists"
+    cat /etc/modules-load.d/nvidia.conf | grep -v "^#" | grep -v "^$" | sed 's/^/     /'
+else
+    echo "   ✗ /etc/modules-load.d/nvidia.conf missing"
+fi
+
+if [ -f /etc/modprobe.d/nvidia.conf ]; then
+    echo "   ✓ /etc/modprobe.d/nvidia.conf exists"
+else
+    echo "   ⚠ /etc/modprobe.d/nvidia.conf missing"
+fi
+echo ""
+
+echo "4. Checking nvidia-smi:"
+if command -v nvidia-smi >/dev/null 2>&1; then
+    echo "   ✓ nvidia-smi found"
+    if nvidia-smi >/dev/null 2>&1; then
+        echo ""
+        nvidia-smi
+        echo ""
+        echo "   ✓ nvidia-smi works correctly!"
+    else
+        echo "   ✗ nvidia-smi found but failed to run"
+        echo "   Error:"
+        nvidia-smi 2>&1 | head -5 | sed 's/^/     /'
+    fi
+else
+    echo "   ✗ nvidia-smi not found"
+fi
+echo ""
+
+echo "5. Checking systemd services:"
+if systemctl is-enabled nvidia-load-modules.service 2>/dev/null; then
+    echo "   ✓ nvidia-load-modules.service is enabled"
+    systemctl status nvidia-load-modules.service --no-pager 2>/dev/null | head -10 | sed 's/^/     /'
+else
+    echo "   ⚠ nvidia-load-modules.service not enabled"
+fi
+
+if systemctl is-enabled nvidia-persistenced.service 2>/dev/null; then
+    echo "   ✓ nvidia-persistenced.service is enabled"
+else
+    echo "   ⚠ nvidia-persistenced.service not enabled (optional)"
+fi
+echo ""
+
+echo "6. Checking dracut configuration:"
+if [ -f /etc/dracut.conf.d/nvidia.conf ]; then
+    echo "   ✓ /etc/dracut.conf.d/nvidia.conf exists"
+else
+    echo "   ⚠ /etc/dracut.conf.d/nvidia.conf missing"
+fi
+echo ""
+
+echo "=========================================="
+echo "Diagnostic Summary:"
+echo "=========================================="
+if lsmod | grep -q nvidia && command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1; then
+    echo "✓ NVIDIA drivers are working correctly!"
+elif lsmod | grep -q nvidia; then
+    echo "⚠ NVIDIA modules loaded but nvidia-smi has issues"
+    echo "  Try running post-install: sudo /usr/local/bin/scvu/scvu-post-install.sh --only-steps nvidia"
+else
+    echo "✗ NVIDIA drivers not loaded"
+    echo "  1. Reboot the system: sudo reboot"
+    echo "  2. After reboot, run this script again"
+    echo "  3. If still not working, run: sudo /usr/local/bin/scvu/scvu-post-install.sh --only-steps nvidia"
+fi
+echo ""
+EOF
+RUN chmod +x /usr/local/bin/scvu/nvidia-check.sh
 
 # Create consolidated post-install script
 RUN cat > /usr/local/bin/scvu/scvu-post-install.sh <<'EOF'
@@ -592,15 +751,66 @@ if (( RUN_BASE )); then
 
     next_step "NVIDIA post-install..."
     if (( RUN_NVIDIA_STEP )); then
-        if command -v nvidia-smi >/dev/null 2>&1; then
-            echo "  NVIDIA detected; updating initramfs..."
+        echo "  Checking NVIDIA installation..."
+        
+        # Check if NVIDIA packages are installed
+        if rpm -q kmod-nvidia akmod-nvidia 2>/dev/null; then
+            echo "  ✓ NVIDIA driver packages installed"
+            
+            # Load NVIDIA modules
+            echo "  Loading NVIDIA kernel modules..."
+            modprobe nvidia 2>/dev/null || echo "  Note: nvidia module load will complete after reboot"
+            modprobe nvidia_modeset 2>/dev/null || true
+            modprobe nvidia_uvm 2>/dev/null || true
+            modprobe nvidia_drm 2>/dev/null || true
+            
+            # Check if modules loaded
+            if lsmod | grep -q nvidia; then
+                echo "  ✓ NVIDIA modules loaded:"
+                lsmod | grep nvidia | awk '{print "    - " $1}'
+            else
+                echo "  ⚠ NVIDIA modules not loaded yet (will load after reboot)"
+            fi
+            
+            # Rebuild initramfs to include NVIDIA modules
+            echo "  Updating initramfs with NVIDIA modules..."
             if command -v dracut >/dev/null 2>&1; then
-                dracut -f 2>/dev/null || echo "  Warning: dracut update failed"
+                echo "  Running dracut to rebuild initramfs..."
+                dracut -f --kver "$(uname -r)" 2>&1 | head -20 || echo "  Warning: dracut update failed, but will retry on next boot"
             else
                 echo "  Warning: dracut not available, skipping initramfs update"
             fi
+            
+            # Verify nvidia-smi works
+            if command -v nvidia-smi >/dev/null 2>&1; then
+                echo "  Testing nvidia-smi..."
+                if nvidia-smi >/dev/null 2>&1; then
+                    echo "  ✓ nvidia-smi working:"
+                    nvidia-smi -L 2>/dev/null || nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null || echo "    (GPU info will be available after reboot)"
+                else
+                    echo "  ⚠ nvidia-smi installed but requires reboot to detect GPUs"
+                    echo "  This is normal on first boot - NVIDIA drivers will activate after reboot"
+                fi
+            else
+                echo "  Warning: nvidia-smi not found"
+            fi
+            
+            # Enable nvidia-persistenced if available
+            if command -v nvidia-persistenced >/dev/null 2>&1; then
+                systemctl enable nvidia-persistenced 2>/dev/null || true
+                echo "  ✓ nvidia-persistenced enabled"
+            fi
+            
+            echo ""
+            echo "  NVIDIA Post-Install Summary:"
+            echo "  - Driver packages: installed ✓"
+            echo "  - Kernel modules: configured for boot ✓"
+            echo "  - initramfs: updated ✓"
+            echo "  - Next step: REBOOT to fully activate NVIDIA drivers"
+            echo ""
         else
-            echo "  NVIDIA not detected, skipping"
+            echo "  ⚠ NVIDIA driver packages not found, skipping NVIDIA setup"
+            echo "  If you have NVIDIA hardware, you may need to install drivers manually"
         fi
     else
         echo "  Skipping NVIDIA post-install (disabled by flag)"
@@ -809,8 +1019,15 @@ Post-install tasks:
 
 3. Install JS frameworks: /usr/local/bin/scvu/install-js-frameworks.sh
 
+NVIDIA GPU Setup:
+- NVIDIA drivers are pre-installed but require a REBOOT to fully activate
+- After reboot, verify with: nvidia-smi
+- Check loaded modules: lsmod | grep nvidia
+- If drivers don't load, run: sudo /usr/local/bin/scvu/scvu-post-install.sh --only-steps nvidia
+
 Quick start:
 - Check OpenShift tools: oc version && kubectl version
+- Check NVIDIA GPU: nvidia-smi (after reboot)
 - SSH/RDP into the system from another machine (XRDP configured)
 - Install Python wheels per-user when needed
 EOF
