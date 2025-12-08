@@ -219,6 +219,23 @@ ls -lh /home/$USER/Documents/Bootc_Test/bootc_ostree/output/bootiso/install.iso
 file /home/$USER/Documents/Bootc_Test/bootc_ostree/output/bootiso/install.iso
 ```
 
+### Upgrade an installed system using the OCI archive (offline)
+```bash
+# 1) Copy the OCI to the target host (example path)
+sudo cp /path/to/scvu-bootc-kde.oci /var/tmp/scvu-bootc-kde.oci
+
+# 2) Load into rootful Podman
+sudo podman load -i /var/tmp/scvu-bootc-kde.oci
+
+# 3) Apply the upgrade from the loaded image
+sudo bootc upgrade --image ostree-unverified-image:containers-storage:localhost/scvu-bootc:kde
+# (optional) switch/pin to this image name instead of upgrade
+# sudo bootc switch --image ostree-unverified-image:containers-storage:localhost/scvu-bootc:kde
+
+# 4) Reboot to boot into the new deployment
+sudo systemctl reboot
+```
+
 ## Creating Bootable USB
 
 **Important:** Do NOT use Fedora Media Writer. Use one of these methods:

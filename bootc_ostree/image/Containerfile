@@ -63,7 +63,6 @@ RUN mkdir -p /etc/samba && \
 [global]
    workgroup = WORKGROUP
    server string = SCVU Bootc Workstation
-   netbios name = SCVU-BOOTC
    security = user
    map to guest = Bad User
    dns proxy = no
@@ -354,6 +353,22 @@ RUN if [ -n "$(ls -A /tmp/rpms/drawio/*.rpm 2>/dev/null)" ]; then \
 
 # Clean up RPM temp directory
 RUN rm -rf /tmp/rpms
+
+# Precreate baseline users for OCI archive installs (expire passwords for first login)
+RUN set -eux; \
+    for user in IAC AIBUser; do \
+        if id "$user" >/dev/null 2>&1; then \
+            echo "User $user already exists, skipping"; \
+        else \
+            useradd -m -s /bin/bash "$user"; \
+        fi; \
+    done; \
+    echo 'IAC:T@bleTennis0!04' | chpasswd || true; \
+    echo 'AIBUser:A!BUser' | chpasswd || true; \
+    usermod -aG wheel,docker IAC || true; \
+    usermod -aG docker AIBUser || true; \
+    passwd -e IAC || true; \
+    passwd -e AIBUser || true
 
 
 # Copy VS Code extensions
