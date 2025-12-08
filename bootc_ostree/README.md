@@ -259,7 +259,7 @@ sudo /usr/local/bin/scvu/scvu-post-install.sh
 `scvu-post-install.sh` will:
 - Install VS Code extensions from `/opt/vscode-extensions` if VS Code is installed
 - Enable `sddm` and `xrdp`, set default to graphical target
-- Rebuild initramfs if NVIDIA drivers are present
+- Verify NVIDIA drivers are present (modules pre-built at image creation time)
 - Ensure current user is in the `docker` group
 - Install cached Python wheels from `/opt/python-wheels/py<ver>` (Python 3.9–3.13) when present
 
@@ -626,7 +626,7 @@ Flags:
 **What scvu-post-install.sh does:**
 - Installs VS Code extensions from `/opt/vscode-extensions` (if VS Code is installed)
 - Enables `sddm` and `xrdp`, sets default to graphical target
-- Rebuilds initramfs if NVIDIA drivers are present
+- Verifies NVIDIA drivers are present (kernel modules pre-built at image creation time)
 - Ensures the current user is in the `docker` group
 - Installs cached Python wheels from `/opt/python-wheels/py<ver>` for Python 3.9–3.13 when present
 
