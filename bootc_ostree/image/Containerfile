@@ -603,8 +603,17 @@ if (( RUN_BASE )); then
             # In bootc/ostree systems, initramfs is managed by bootc and regenerated during upgrades
             # Manual dracut may fail due to read-only /boot
             if [ -f /run/ostree-booted ]; then
-                echo "  Running on bootc/ostree system - initramfs will be regenerated on next 'bootc upgrade'
-  To apply NVIDIA driver changes now, run: sudo bootc upgrade && sudo reboot"
+                echo "  Running on bootc/ostree system"
+                # Enable local initramfs regeneration for NVIDIA drivers
+                if command -v rpm-ostree >/dev/null 2>&1; then
+                    echo "  Enabling local initramfs regeneration with rpm-ostree..."
+                    rpm-ostree initramfs --enable 2>/dev/null || echo "  Warning: Could not enable initramfs regeneration"
+                    echo "  Initramfs will be regenerated with NVIDIA drivers on next boot"
+                    echo "  To apply changes now, run: sudo systemctl reboot"
+                else
+                    echo "  rpm-ostree not available, initramfs will be regenerated on next 'bootc upgrade'"
+                    echo "  To apply NVIDIA driver changes now, run: sudo bootc upgrade && sudo reboot"
+                fi
             elif command -v dracut >/dev/null 2>&1; then
                 echo "  Updating initramfs with dracut..."
                 dracut -f 2>/dev/null || echo "  Warning: dracut update failed"
