@@ -98,7 +98,7 @@ Build a fully offline, air-gapped installer ISO by embedding a prebuilt bootc co
 - Includes cached Python wheel install by default (offline, Python 3.9–3.13).
 - Flags: `--no-wheels` to skip, `--wheels-only` to install wheels only, `--py py310 --py py311` to target versions.
 - Per-step control (combine as needed): `--skip-extensions`, `--skip-readme`, `--skip-services`, `--skip-nvidia`, `--skip-docker`, `--skip-podman`, or `--only-steps extensions,services` to run just listed base steps.
-- scvu-post-install does: install VS Code extensions from `/opt/vscode-extensions`, enable `sddm` and `xrdp`, rebuild initramfs if NVIDIA present, ensure user in `docker` group, and install cached Python wheels from `/opt/python-wheels/py<ver>` if present.
+- scvu-post-install does: install VS Code extensions from `/opt/vscode-extensions`, enable `sddm` and `xrdp`, verify NVIDIA drivers (modules pre-built at image creation), ensure user in `docker` group, and install cached Python wheels from `/opt/python-wheels/py<ver>` if present.
 - Optional script: `scvu/install-js-frameworks.sh`.
 
 ## Updates

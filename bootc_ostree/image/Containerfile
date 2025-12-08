@@ -206,6 +206,28 @@ RUN dnf -y --setopt=install_weak_deps=False install \
         nvidia-persistenced && \
     dnf -y clean all && rm -rf /var/cache/dnf
 
+# Build NVIDIA kernel modules at container build time for bootc read-only filesystem
+# This prevents runtime akmods failures on immutable /usr
+RUN if [ -f /usr/sbin/akmods ]; then \
+        echo "Building NVIDIA kernel modules for installed kernel(s)..."; \
+        KERNEL_VERSIONS=$(rpm -q kernel --qf '%{VERSION}-%{RELEASE}.%{ARCH}\n' 2>/dev/null); \
+        if [ -n "$KERNEL_VERSIONS" ]; then \
+            echo "Found kernel version(s):"; \
+            echo "$KERNEL_VERSIONS"; \
+            if akmods --force; then \
+                echo "NVIDIA kernel modules built successfully for all kernels"; \
+                echo "Regenerating initramfs for all kernels with NVIDIA modules..."; \
+                dracut -f --regenerate-all && echo "Initramfs regeneration complete for all kernels" || \
+                echo "Warning: dracut regeneration failed for one or more kernels, NVIDIA may not load at boot"; \
+            else \
+                echo "Warning: akmods failed to build NVIDIA modules"; \
+                echo "NVIDIA drivers may not function properly in the installed system"; \
+            fi; \
+        else \
+            echo "Warning: No kernel packages found, skipping akmods build"; \
+        fi; \
+    fi
+
 # Install VS Code (offline preferred, online fallback)
 COPY offline-repo/vscode/ /tmp/rpms/vscode/
 RUN if [ -n "$(find /tmp/rpms/vscode/ -maxdepth 1 -type f -name '*.rpm' 2>/dev/null)" ]; then \
@@ -348,7 +370,7 @@ Usage: scvu-post-install.sh [options] [user...]
   --skip-extensions  Skip VS Code extensions
   --skip-readme      Skip copying README to user desktops
   --skip-services    Skip enabling GUI services (sddm/xrdp/graphical target)
-  --skip-nvidia      Skip NVIDIA initramfs refresh
+  --skip-nvidia      Skip NVIDIA driver verification
   --skip-docker      Skip adding users to docker group
   --skip-podman      Skip podman user socket enable
   --skip-create-user Skip creating AIBUser
@@ -590,20 +612,17 @@ if (( RUN_BASE )); then
         echo "  Skipping GUI services enable (disabled by flag)"
     fi
 
-    next_step "NVIDIA post-install..."
+    next_step "NVIDIA verification..."
     if (( RUN_NVIDIA_STEP )); then
         if command -v nvidia-smi >/dev/null 2>&1; then
-            echo "  NVIDIA detected; updating initramfs..."
-            if command -v dracut >/dev/null 2>&1; then
-                dracut -f 2>/dev/null || echo "  Warning: dracut update failed"
-            else
-                echo "  Warning: dracut not available, skipping initramfs update"
-            fi
+            echo "  NVIDIA drivers detected in system image"
+            echo "  Kernel modules were pre-built at image creation time"
+            echo "  Run 'nvidia-smi' after reboot to verify NVIDIA driver functionality"
         else
             echo "  NVIDIA not detected, skipping"
         fi
     else
-        echo "  Skipping NVIDIA post-install (disabled by flag)"
+        echo "  Skipping NVIDIA verification (disabled by flag)"
     fi
 
     next_step "Docker group setup..."
