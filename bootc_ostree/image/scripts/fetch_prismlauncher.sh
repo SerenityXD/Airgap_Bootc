@@ -4,7 +4,7 @@
 
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../" && pwd)"
 OFFLINE_DIR="${SCRIPT_DIR}/image/offline-repo/prismlauncher"
 
 echo "========================================"
@@ -45,4 +45,3 @@ echo ""
 echo "✓ Prism Launcher downloaded successfully"
 echo ""
 echo "Prism Launcher saved to: $OFFLINE_DIR"
-

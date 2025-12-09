@@ -19,6 +19,10 @@ RUN mkdir -p /etc/chrony.d && \
     echo "server time.nist.gov iburst" >> /etc/chrony.d/custom-servers.conf && \
     echo "server pool.ntp.org iburst" >> /etc/chrony.d/custom-servers.conf
 
+# Trust the bundled enterprise CA
+COPY ca-bundle.crt /etc/pki/ca-trust/source/anchors/scvu-local-ca.crt
+RUN update-ca-trust
+
 # Minimize dnf footprint and locales
 RUN sed -i '/^tsflags/ d' /etc/dnf/dnf.conf && echo 'tsflags=nodocs' >> /etc/dnf/dnf.conf && \
     dnf -y install glibc-minimal-langpack langpacks-en || true && \
@@ -39,6 +43,7 @@ RUN dnf -y --setopt=install_weak_deps=False install \
     git fastfetch \
     network-manager-applet \
     kernel-devel kernel-modules-extra \
+    power-profiles-daemon \
     # Container tools
     slirp4netns conntrack-tools bridge-utils fuse-overlayfs podman \
     # Remote desktop
@@ -92,6 +97,22 @@ RUN mkdir -p /etc/samba && \
    remote browse sync = yes
    remote announce = 255.255.255.255/WORKGROUP
    
+   # User shares (allow regular users to create and manage shares)
+   usershare path = /var/lib/samba/usershares
+   usershare max shares = 100
+   usershare allow guests = yes
+   usershare owner only = yes
+   
+[homes]
+   comment = User Home Directories
+   browseable = yes
+   read only = no
+   writable = yes
+   valid users = %S
+   create mask = 0644
+   directory mask = 0755
+   path = /home/%S
+
 # Example share (commented out - users can enable as needed)
 # [Public]
 #    comment = Public Share
@@ -102,6 +123,11 @@ RUN mkdir -p /etc/samba && \
 #    create mask = 0644
 #    directory mask = 0755
 EOF
+
+# Set up usershares directory with proper permissions
+RUN mkdir -p /var/lib/samba/usershares && \
+    chmod 1770 /var/lib/samba/usershares && \
+    chown root:root /var/lib/samba/usershares
 
 # Create Avahi service file for SMB/CIFS advertisement
 RUN mkdir -p /etc/avahi/services && \
@@ -354,7 +380,7 @@ RUN if [ -n "$(ls -A /tmp/rpms/drawio/*.rpm 2>/dev/null)" ]; then \
 # Clean up RPM temp directory
 RUN rm -rf /tmp/rpms
 
-# Precreate baseline users for OCI archive installs (expire passwords for first login)
+# Precreate baseline users for OCI archive installs
 RUN set -eux; \
     for user in IAC AIBUser; do \
         if id "$user" >/dev/null 2>&1; then \
@@ -366,9 +392,7 @@ RUN set -eux; \
     echo 'IAC:T@bleTennis0!04' | chpasswd || true; \
     echo 'AIBUser:A!BUser' | chpasswd || true; \
     usermod -aG wheel,docker IAC || true; \
-    usermod -aG docker AIBUser || true; \
-    passwd -e IAC || true; \
-    passwd -e AIBUser || true
+    usermod -aG docker AIBUser || true
 
 
 # Copy VS Code extensions
@@ -382,17 +406,135 @@ COPY vscode-extensions/*.vsix /opt/vscode-extensions/
 COPY SCVU-README.md /usr/local/bin/scvu/SCVU-README.md
 
 # Create JavaScript frameworks installer
+# Prefer pre-cached npm tarballs (if provided by offline repo)
+COPY offline-repo/npm-packages/ /opt/npm-packages/
+
+# Create offline npm cache and install JS frameworks from cache
+RUN mkdir -p /opt/npm-packages && \
+    set -eux; \
+    for pkg in create-react-app @vue/cli @angular/cli create-next-app vite webpack webpack-cli typescript ts-node jest mocha eslint prettier pnpm; do \
+        echo "Packing $pkg"; \
+        npm pack "$pkg" --pack-destination /opt/npm-packages || echo "Warning: npm pack failed for $pkg"; \
+    done; \
+    if ls /opt/npm-packages/*.tgz >/dev/null 2>&1; then \
+        echo "Installing JS frameworks from offline cache..."; \
+        npm install -g /opt/npm-packages/*.tgz || echo "Warning: npm install -g from cache failed"; \
+    else \
+        echo "No npm packages were cached; skipping global install"; \
+    fi
+
+# Create JavaScript frameworks verifier (checks cache and installed binaries)
 RUN cat > /usr/local/bin/scvu/install-js-frameworks.sh <<'EOF'
 #!/bin/bash
-# Install JavaScript frameworks globally
-set -e
-echo "Installing JavaScript frameworks..."
-npm install -g create-react-app @vue/cli @angular/cli create-next-app \
-  vite webpack webpack-cli typescript ts-node \
-  jest mocha eslint prettier pnpm || true
-echo "JavaScript frameworks installed"
+set -euo pipefail
+
+CACHE="/opt/npm-packages"
+PKGS=(create-react-app @vue/cli @angular/cli create-next-app vite webpack webpack-cli typescript ts-node jest mocha eslint prettier pnpm)
+declare -A BINMAP
+BINMAP=( ["@vue/cli"]="vue" ["@angular/cli"]="ng" ["webpack-cli"]="webpack" ["typescript"]="tsc" )
+
+if [ ! -d "$CACHE" ]; then
+    echo "No offline npm cache found at $CACHE"
+    exit 1
+fi
+
+missing=0
+for pkg in "${PKGS[@]}"; do
+    # default binary name is basename(package)
+    bin="${BINMAP[$pkg]:-$(basename "$pkg") }"
+    if command -v "$bin" >/dev/null 2>&1; then
+        echo "OK: $bin"
+    else
+        echo "MISSING: $bin"
+        missing=1
+    fi
+done
+
+if [ $missing -eq 0 ]; then
+    echo "All JS tools present"
+    exit 0
+fi
+
+echo "To install missing tools from the offline cache run:"
+echo "  sudo npm install -g /opt/npm-packages/*.tgz"
+exit 2
 EOF
 RUN chmod +x /usr/local/bin/scvu/install-js-frameworks.sh
+
+# Create automount script for separate hard drive
+RUN cat > /usr/local/bin/scvu/automount-drive.sh <<'EOF'
+#!/bin/bash
+set -euo pipefail
+
+DEVICE="${1:-/dev/sda1}"
+MOUNT_POINT="${2:-.mountpoint}"
+
+usage() {
+cat <<'USAGE'
+Usage: automount-drive.sh [device] [mount_point]
+  device       - Block device to mount (default: /dev/sda1)
+  mount_point  - Relative mount point in user home (default: .mountpoint)
+
+This script attempts to mount a separate hard drive and make it accessible to the current user.
+Example: automount-drive.sh /dev/sda1 /mnt/data
+
+USAGE
+}
+
+if [[ "$DEVICE" == "-h" ]] || [[ "$DEVICE" == "--help" ]]; then
+    usage
+    exit 0
+fi
+
+if [ ! -e "$DEVICE" ]; then
+    echo "Error: Device $DEVICE not found"
+    exit 1
+fi
+
+# Determine mount point (absolute or relative to home)
+if [[ "$MOUNT_POINT" == /* ]]; then
+    TARGET_MOUNT="$MOUNT_POINT"
+else
+    TARGET_MOUNT="$HOME/$MOUNT_POINT"
+fi
+
+echo "Attempting to mount $DEVICE to $TARGET_MOUNT"
+
+# Check if device is already mounted
+if mountpoint -q "$TARGET_MOUNT" 2>/dev/null; then
+    echo "$DEVICE is already mounted at $TARGET_MOUNT"
+    exit 0
+fi
+
+# Create mount point if it doesn't exist
+if [ ! -d "$TARGET_MOUNT" ]; then
+    echo "Creating mount point: $TARGET_MOUNT"
+    mkdir -p "$TARGET_MOUNT"
+fi
+
+# Detect filesystem and mount with appropriate options
+echo "Detecting filesystem on $DEVICE..."
+FSTYPE=$(sudo blkid -o value -s TYPE "$DEVICE" 2>/dev/null || echo "auto")
+echo "Detected filesystem: $FSTYPE"
+
+# Mount with appropriate flags based on filesystem
+case "$FSTYPE" in
+    ntfs|exfat|vfat)
+        echo "Mounting with user-friendly options for $FSTYPE"
+        sudo mount -t "$FSTYPE" -o umask=0022,dmask=0022,fmask=0133,uid=$(id -u),gid=$(id -g) "$DEVICE" "$TARGET_MOUNT"
+        ;;
+    *)
+        echo "Mounting with default options"
+        sudo mount -t "$FSTYPE" "$DEVICE" "$TARGET_MOUNT"
+        # Try to make writable for current user if not already
+        sudo chown "$(id -u):$(id -g)" "$TARGET_MOUNT" 2>/dev/null || true
+        ;;
+esac
+
+echo "✓ Successfully mounted $DEVICE to $TARGET_MOUNT"
+echo "To unmount later, run: sudo umount $TARGET_MOUNT"
+EOF
+RUN chmod +x /usr/local/bin/scvu/automount-drive.sh
 
 # Stage OpenShift/Kubernetes CLI tools (copy cache first, then install)
 COPY offline-repo/openshift/ /opt/offline/openshift/
@@ -893,30 +1035,74 @@ RUN systemctl enable sddm || true && \
 
 # Create README in users' home
 RUN cat > /etc/skel/README.txt <<'EOF'
-Welcome to SCVU Bootc Workstation
-==================================
+SCVU Bootc Workstation — Quick Start & Post-Boot Tasks
+=====================================================
 
-Pre-installed tools:
-- oc (OpenShift CLI) - available as: oc
-- kubectl (Kubernetes CLI) - available as: kubectl
-- crc (CodeReady Containers) - available as: crc (if pre-cached)
+This system image ships with helper scripts and pre-cached artifacts under
+`/usr/local/bin/scvu/` and caches under `/opt` so that air-gapped installs
+work out of the box.
 
-Post-install tasks:
-1. Run consolidated post install (admin tasks): sudo /usr/local/bin/scvu/scvu-post-install.sh
-    - Skip wheels: sudo /usr/local/bin/scvu/scvu-post-install.sh --no-wheels
-    - Per-step skips: add --skip-extensions/--skip-readme/--skip-services/--skip-nvidia/--skip-docker/--skip-podman
-    - Only selected steps: sudo /usr/local/bin/scvu/scvu-post-install.sh --only-steps extensions,readme,services,nvidia,docker,podman
+Key scripts (location: `/usr/local/bin/scvu/`)
+- `scvu-post-install.sh` — consolidated admin post-install tasks. Run as root.
+        - Usage highlights: `sudo /usr/local/bin/scvu/scvu-post-install.sh [options] [users...]`
+        - Supported flags:
+            - `--skip-extensions` : do not install VS Code extensions
+            - `--skip-readme`     : do not copy README to user desktops
+            - `--skip-services`   : skip enabling GUI services (sddm/xrdp/graphical.target)
+            - `--skip-nvidia`     : skip NVIDIA verification checks
+            - `--skip-docker`     : skip adding users to `docker` group
+            - `--skip-podman`     : skip podman socket enablement steps
+            - `--skip-create-user`: skip creating the default `AIBUser`
+            - `--only-steps LIST` : run only the comma-separated steps (create_user,extensions,readme,services,nvidia,docker,podman)
+        - Examples:
+            - Run all admin setup: `sudo /usr/local/bin/scvu/scvu-post-install.sh`
+            - Run only user creation and services: `sudo /usr/local/bin/scvu/scvu-post-install.sh --only-steps create_user,services`
+            - Install extensions for a specific user: `sudo /usr/local/bin/scvu/scvu-post-install.sh alice`
 
-2. Python wheels are pre-installed system-wide for all users
-    - Verify installation: /usr/local/bin/scvu/install-python-wheels.sh
-    - Add user packages: /usr/local/bin/scvu/install-python-wheels.sh --py py310 --user
+- `install-python-wheels.sh` — installs/verifies pre-downloaded Python wheels from `/opt/python-wheels`.
+        - Usage highlights: `/usr/local/bin/scvu/install-python-wheels.sh [--py py310] [--user] [--all]`
+        - Examples:
+            - Verify all wheels: `sudo /usr/local/bin/scvu/install-python-wheels.sh`
+            - Install for Python 3.10 in user site-packages: `sudo /usr/local/bin/scvu/install-python-wheels.sh --py py310 --user`
 
-3. Install JS frameworks: /usr/local/bin/scvu/install-js-frameworks.sh
+- `install-js-frameworks.sh` — installs common JS frameworks globally (optional).
 
-Quick start:
-- Check OpenShift tools: oc version && kubectl version
-- SSH/RDP into the system from another machine (XRDP configured)
-- Install Python wheels per-user when needed
+Where cached/offline files are placed
+- OpenShift/Kubernetes tools: `/usr/local/bin/scvu/oc`, `/usr/local/bin/scvu/kubectl`, `/usr/local/bin/scvu/crc`
+- Pre-downloaded RPMs: staged under `/opt/offline/` and installed during build
+- Python wheels: `/opt/python-wheels/` (per-interpreter subfolders)
+
+Post-boot recommended steps (first boot)
+1. Ensure network is configured (NetworkManager GUI or `nmcli`).
+2. As root, run the consolidated post-install to complete admin setup:
+     `sudo /usr/local/bin/scvu/scvu-post-install.sh`
+     - Use `--skip-...` flags to disable parts you don't want to run.
+     - To only perform specific actions use `--only-steps`.
+3. Reboot if `scvu-post-install.sh` indicates services or kernel modules need it.
+
+Per-user tasks
+- After first login, users who need the Podman user socket can enable it locally:
+    `systemctl --user enable --now podman.socket`
+    (If lingering is desired for the account, `sudo loginctl enable-linger <user>`.)
+
+Verifications
+- NVIDIA: run `nvidia-smi` after reboot to confirm driver and kernel module functionality.
+- VS Code extensions: run `code --list-extensions` as the user to confirm installed extensions.
+- Python wheels: `sudo /usr/local/bin/scvu/install-python-wheels.sh --py py310` to verify per-interpreter packages.
+
+Troubleshooting notes
+- Many build-time warnings are expected in container-built images (e.g. pip running as root,
+    systemd messages while running in a build container). The post-install script performs
+    the runtime steps that require an installed system.
+- If podman socket setup fails in the post-install script, run the user `systemctl --user`
+    commands after the user first logs in.
+
+Useful commands
+- Run post-install (admin): `sudo /usr/local/bin/scvu/scvu-post-install.sh`
+- Verify Python wheels: `sudo /usr/local/bin/scvu/install-python-wheels.sh --py py310`
+- Install JS frameworks (admin): `sudo /usr/local/bin/scvu/install-js-frameworks.sh`
+- Check OpenShift tools: `oc version && kubectl version`
+
 EOF
 
 # Bootc configuration

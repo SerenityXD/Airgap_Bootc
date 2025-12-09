@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../" && pwd)
 OFFLINE_REPO_DIR="$SCRIPT_DIR/image/offline-repo"
 ARCH="$(uname -m)"
 BASE_IMAGE_VERSION="43"

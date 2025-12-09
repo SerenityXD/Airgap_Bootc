@@ -69,7 +69,11 @@ bootc_ostree/oci-image/
 *.lz
 
 # Vendor/third-party payloads (often large)
-bootc_ostree/image/offline-repo/**/*
+# Generally ignore the offline-repo, but allow the npm-packages required for builds
+bootc_ostree/image/offline-repo/**
+!bootc_ostree/image/offline-repo/npm-packages/
+!bootc_ostree/image/offline-repo/npm-packages/package-versions.txt
+
 
 # Allow directory markers
-!.gitkeep
+.gitkeep

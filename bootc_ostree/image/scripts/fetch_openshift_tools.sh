@@ -4,7 +4,7 @@
 
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../" && pwd)"
 OFFLINE_DIR="${SCRIPT_DIR}/image/offline-repo/openshift"
 OC_VERSION="${OC_VERSION:-stable}"  # Can set to specific version like "4.14.0"
 KUBECTL_VERSION="${KUBECTL_VERSION:-stable}"

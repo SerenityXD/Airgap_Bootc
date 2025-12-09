@@ -4,7 +4,7 @@
 
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../" && pwd)"
 OFFLINE_DIR="${SCRIPT_DIR}/image/offline-repo/triton"
 TRITON_VERSION="${TRITON_VERSION:-24.11}"  # Update as needed
 TRITON_IMAGE="nvcr.io/nvidia/tritonserver:${TRITON_VERSION}-py3"
@@ -67,10 +67,10 @@ ls -lh "${OFFLINE_DIR}"
 echo ""
 echo "The Triton Server image will be automatically loaded on the target system."
 echo ""
-echo "After installing the OS, load the image:"
+echo "After installing the OS, load the image:" 
 echo "  podman load -i ~/.local/share/triton/${ARCHIVE_NAME}"
-echo "  podman run --rm --gpus all -p 8000:8000 -p 8001:8001 -p 8002:8002 \\"
-echo "    -v /path/to/models:/models \\"
+echo "  podman run --rm --gpus all -p 8000:8000 -p 8001:8001 -p 8002:8002 \\\"
+echo "    -v /path/to/models:/models \\\"
 echo "    ${TRITON_IMAGE} tritonserver --model-repository=/models"
 echo ""
 echo "To rebuild ISO with Triton Server:"

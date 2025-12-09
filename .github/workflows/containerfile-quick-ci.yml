@@ -1,0 +1,49 @@
+name: Containerfile Quick CI
+
+on:
+  pull_request:
+    paths:
+      - 'bootc_ostree/image/**'
+
+jobs:
+  quick-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Podman
+        run: |
+          echo 'Installing Podman and buildah (Ubuntu runner)'
+          sudo apt-get update
+          sudo apt-get install -y podman buildah skopeo
+
+      - name: Build Containerfile (fast) with Podman
+        run: |
+          echo 'Building image (fast check) with podman'
+          podman build -t scvu-bootc -f bootc_ostree/image/Containerfile bootc_ostree/image
+
+      - name: DNF cache hygiene lint
+        run: |
+          echo 'Checking DNF cache hygiene in Containerfile'
+          set -euo pipefail
+          # For each dnf install occurrence, ensure the next 40 lines include dnf clean and cache removal
+          grep -n -E 'dnf .*install' bootc_ostree/image/Containerfile | cut -d: -f1 | while read -r ln; do
+            tail -n +$ln bootc_ostree/image/Containerfile | head -n 40 > /tmp/_cf_block.txt
+            if ! (grep -q -E 'dnf .*clean all' /tmp/_cf_block.txt && grep -q -F 'rm -rf /var/cache/dnf' /tmp/_cf_block.txt); then
+              echo "DNF cache cleanup missing near line $ln" >&2
+              cat /tmp/_cf_block.txt >&2
+              exit 2
+            fi
+          done || true
+
+      - name: Shellcheck scripts
+        run: |
+          echo 'Running shellcheck on repo scripts (non-fatal)'
+          sudo apt-get update && sudo apt-get install -y shellcheck
+          shellcheck -x bootc_ostree/image/scripts/*.sh || true
+
+      - name: Permission check inside image (best-effort)
+        run: |
+          echo 'Checking permissions of /usr/local/bin/scvu/* inside built image (best-effort)'
+          podman run --rm scvu-bootc sh -c 'stat -c "%a %n" /usr/local/bin/scvu/*' || echo 'Files missing or stat failed; verify in runtime if needed.'

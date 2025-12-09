@@ -29,12 +29,44 @@ Post-install checks
 - Python toolchains: `python3.9|3.10|3.11|3.12|3.13 -m pip list` to see preinstalled data-science packages; default `python3` is 3.14 from Fedora.
 
 Notable packaged content (preinstalled)
-- GPU: NVIDIA driver/cuda libs 580.95.05 (offline RPMs preferred), fallback to rpmfusion online.
-- IDEs/tools: VS Code, Docker Desktop, draw.io.
-- Windows Emulation: WineHQ stable 10.0, Lutris, Steam prerequisites (mesa-vulkan, gamemode, gamescope).
-- Data science (per Python 3.9–3.13): `tritonclient`, `numpy`, `scipy`, `pandas`, `matplotlib`, `scikit-learn`, `jupyter`, `notebook`, `ipython`, `seaborn`, `opencv-python`.
-- Misc: OBS Studio plugin dependencies, runtime fonts/codecs from offline repos, VS Code extensions staged in `/opt/vscode-extensions/` (install with `code --install-extension /opt/vscode-extensions/<name>.vsix`).
 
+Offline npm packages (JS frameworks)
+----------------------------------
+
+For air-gapped or reproducible builds the image supports pre-caching npm packages
+as tarballs and including them in the build. This repo contains a helper to
+generate those tarballs and a manifest with pinned versions.
+
+Files of interest:
+- `image/offline-repo/npm-packages/package-versions.txt` — list of packages (one per line,
+  optional `@version` suffix) that will be packed into `.tgz` files.
+- `image/scripts/create-npm-tarballs.sh` — helper script that runs `npm pack` for
+  each entry in the manifest and places the resulting `.tgz` files in
+  `image/offline-repo/npm-packages/`.
+
+Usage (on an internet-enabled machine):
+```bash
+chmod +x image/scripts/create-npm-tarballs.sh
+./image/scripts/create-npm-tarballs.sh
+# The script reads package-versions.txt and writes *.tgz into image/offline-repo/npm-packages/
+```
+
+After tarballs are created:
+- Commit the `*.tgz` files into the repo (or otherwise copy them to the build host).
+- The `Containerfile` will `COPY offline-repo/npm-packages/ /opt/npm-packages/` and
+  will prefer installing from those tarballs during image build. If tarballs are
+  absent the Containerfile falls back to `npm pack` (requires network access).
+
+To verify in the built system run the verifier included in the image:
+```bash
+sudo /usr/local/bin/scvu/install-js-frameworks.sh
+```
+It reports which binaries are present and instructs how to install from the
+offline cache if anything is missing.
+
+Notes:
+- Pin versions in `package-versions.txt` for reproducible builds.
+- Tarballs are versioned and deterministic for a given registry state and
+  package version; committing them makes builds reproducible and air-gap friendly.
 Support
 - If a package looks missing, check `/tmp/rpms` content in the build logs; online fallbacks may have been used when offline RPMs were absent.
-- For detailed build steps and flags, see `build_export_iso.sh` and `build-iso-helper.sh` docs in the repo.

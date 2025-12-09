@@ -4,7 +4,7 @@
 
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../" && pwd)"
 OFFLINE_DIR="${SCRIPT_DIR}/image/offline-repo/drawio"
 DRAWIO_VERSION="${DRAWIO_VERSION:-latest}"
 
@@ -21,7 +21,7 @@ cd "${OFFLINE_DIR}"
 # Get latest version if not specified
 if [ "${DRAWIO_VERSION}" = "latest" ]; then
     echo "Fetching latest draw.io version..."
-    DRAWIO_VERSION=$(curl -sL https://api.github.com/repos/jgraph/drawio-desktop/releases/latest | grep -Po '"tag_name": "v\K[^"]*' || echo "24.7.17")
+    DRAWIO_VERSION=$(curl -sL https://api.github.com/repos/jgraph/drawio-desktop/releases/latest | grep -Po '"tag_name": "v\K[^"*]' || echo "24.7.17")
     echo "  Latest version: ${DRAWIO_VERSION}"
 fi
 

@@ -57,6 +57,44 @@ Build a fully offline, air-gapped installer ISO by embedding a prebuilt bootc co
 - Default Fedora base: 43. Override with `FEDORA_VERSION=43 ...` if you build a different base.
 - Known conflicts: `ffmpeg-free` vs RPM Fusion; `wine-desktop` vs WineHQ. Remove temporarily if fetch fails.
 
+### Offline npm packages (JS frameworks)
+
+For air-gapped or reproducible builds the image supports pre-caching npm packages
+as tarballs and including them in the build. This repository contains a helper to
+generate those tarballs and a manifest with pinned versions.
+
+Files of interest:
+- `bootc_ostree/image/offline-repo/npm-packages/package-versions.txt` — list of packages (one per line,
+  optional `@version` suffix) that will be packed into `.tgz` files.
+- `bootc_ostree/image/scripts/create-npm-tarballs.sh` — helper script that runs `npm pack` for
+  each entry in the manifest and places the resulting `.tgz` files in
+  `bootc_ostree/image/offline-repo/npm-packages/`.
+
+Usage (on an internet-enabled machine):
+```bash
+chmod +x bootc_ostree/image/scripts/create-npm-tarballs.sh
+./bootc_ostree/image/scripts/create-npm-tarballs.sh
+# The script reads package-versions.txt and writes *.tgz into bootc_ostree/image/offline-repo/npm-packages/
+```
+
+After tarballs are created:
+- Commit the `*.tgz` files into the repo (or otherwise copy them to the build host).
+- The `Containerfile` will `COPY bootc_ostree/image/offline-repo/npm-packages/ /opt/npm-packages/` and
+  will prefer installing from those tarballs during image build. If tarballs are
+  absent the Containerfile falls back to `npm pack` (requires network access).
+
+To verify in the built system run the verifier included in the image:
+```bash
+sudo /usr/local/bin/scvu/install-js-frameworks.sh
+```
+It reports which binaries are present and instructs how to install from the
+offline cache if anything is missing.
+
+Notes:
+- Pin versions in `package-versions.txt` for reproducible builds.
+- Tarballs are versioned and deterministic for a given registry state and
+  package version; committing them makes builds reproducible and air-gap friendly.
+
 ## Build Options
 - Helper (simplest):
   - Interactive (default): `./bootc_ostree/build-scripts/build-iso-helper.sh`
@@ -100,6 +138,15 @@ Build a fully offline, air-gapped installer ISO by embedding a prebuilt bootc co
 - Per-step control (combine as needed): `--skip-extensions`, `--skip-readme`, `--skip-services`, `--skip-nvidia`, `--skip-docker`, `--skip-podman`, or `--only-steps extensions,services` to run just listed base steps.
 - scvu-post-install does: install VS Code extensions from `/opt/vscode-extensions`, enable `sddm` and `xrdp`, verify NVIDIA drivers (modules pre-built at image creation), ensure user in `docker` group, and install cached Python wheels from `/opt/python-wheels/py<ver>` if present.
 - Optional script: `scvu/install-js-frameworks.sh`.
+
+## BIOS/UEFI & NVIDIA Configuration (Important)
+If your system has NVIDIA graphics and you encounter driver/module load failures after boot:
+
+- **Disable Secure Boot in BIOS/UEFI:**
+  Secure Boot blocks unsigned kernel modules (such as NVIDIA proprietary drivers) from loading, resulting in module verification errors and device initialization failures. For NVIDIA to work properly, enter system firmware and set Secure Boot to Disabled. Save and reboot.
+
+- **Change graphics settings from Hybrid to Discrete in BIOS (firmware):**
+  HP laptops often ship with Hybrid graphics (both Intel iGPU and NVIDIA dGPU active). Hybrid mode frequently puts the dGPU into permanent D3cold or power-gated state, causing probe failures and "device inaccessible" errors. Enter BIOS Setup, locate graphics or video settings, and select Discrete mode rather than Hybrid. Save and reboot.
 
 ## Updates
 - Status: `bootc status`

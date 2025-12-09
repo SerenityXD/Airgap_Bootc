@@ -7,7 +7,7 @@
 
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../" && pwd)"
 OUTPUT_DIR="$SCRIPT_DIR/image/offline-repo/obs"
 
 echo "================================"
@@ -25,9 +25,7 @@ if ! dnf repolist 2>/dev/null | grep -q rpmfusion; then
     echo "OBS Studio is only available from RPM Fusion."
     echo "Please install RPM Fusion first:"
     echo ""
-    echo "  sudo dnf install -y \\"
-    echo "    https://download1.rpmfusion.org/free/fedora/rpmfusion-free-release-\$(rpm -E %fedora).noarch.rpm \\"
-    echo "    https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-\$(rpm -E %fedora).noarch.rpm"
+    echo "  sudo dnf install -y \\\n+    https://download1.rpmfusion.org/free/fedora/rpmfusion-free-release\$(rpm -E %fedora).noarch.rpm \\\n+    https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release\$(rpm -E %fedora).noarch.rpm"
     echo ""
     exit 1
 fi
