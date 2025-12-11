@@ -290,9 +290,10 @@ RUN if [ -n "$(ls -A /tmp/rpms/obs/*.rpm 2>/dev/null)" ]; then \
     fi
 
 # Install NVIDIA drivers from RPM Fusion
-# First install RPM Fusion repository and akmods infrastructure
-RUN dnf -y --setopt=install_weak_deps=False install \
-        https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm && \
+# First install RPM Fusion repository (if not already installed) and akmods infrastructure
+RUN (dnf -y --setopt=install_weak_deps=False install \
+        https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm || \
+    echo "RPM Fusion nonfree repository already installed or installation failed") && \
     dnf -y --setopt=install_weak_deps=False install \
         akmods \
         kernel-headers && \
