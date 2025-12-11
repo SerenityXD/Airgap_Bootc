@@ -290,9 +290,16 @@ RUN if [ -n "$(ls -A /tmp/rpms/obs/*.rpm 2>/dev/null)" ]; then \
     fi
 
 # Install NVIDIA drivers from RPM Fusion
+# First install RPM Fusion repository and akmods infrastructure
 RUN dnf -y --setopt=install_weak_deps=False install \
         https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm && \
-    dnf -y --setopt=install_weak_deps=False install --best \
+    dnf -y --setopt=install_weak_deps=False install \
+        akmods \
+        kernel-headers && \
+    dnf -y clean all && rm -rf /var/cache/dnf
+
+# Install NVIDIA driver packages
+RUN dnf -y --setopt=install_weak_deps=False install --best \
         akmod-nvidia \
         xorg-x11-drv-nvidia \
         xorg-x11-drv-nvidia-cuda \
@@ -309,8 +316,20 @@ RUN if [ -f /usr/sbin/akmods ]; then \
         if [ -n "$KERNEL_VERSIONS" ]; then \
             echo "Found kernel version(s):"; \
             echo "$KERNEL_VERSIONS"; \
+            echo "Verifying build dependencies..."; \
+            rpm -q gcc make kernel-devel kernel-headers akmods || echo "Warning: some build dependencies missing"; \
             if akmods --force; then \
                 echo "NVIDIA kernel modules built successfully for all kernels"; \
+                echo "Verifying nvidia.ko module presence..."; \
+                for kver in $KERNEL_VERSIONS; do \
+                    if [ -f "/usr/lib/modules/$kver/extra/nvidia/nvidia.ko" ] || \
+                       [ -f "/usr/lib/modules/$kver/extra/nvidia/nvidia.ko.xz" ]; then \
+                        echo "✓ nvidia.ko found for kernel $kver"; \
+                    else \
+                        echo "✗ Warning: nvidia.ko NOT found for kernel $kver"; \
+                        find /usr/lib/modules/$kver -name "nvidia*.ko*" 2>/dev/null || echo "  No NVIDIA modules found"; \
+                    fi; \
+                done; \
                 echo "Regenerating initramfs for all kernels with NVIDIA modules..."; \
                 dracut -f --regenerate-all && echo "Initramfs regeneration complete for all kernels" || \
                 echo "Warning: dracut regeneration failed for one or more kernels, NVIDIA may not load at boot"; \
@@ -321,6 +340,8 @@ RUN if [ -f /usr/sbin/akmods ]; then \
         else \
             echo "Warning: No kernel packages found, skipping akmods build"; \
         fi; \
+    else \
+        echo "Warning: akmods not found, NVIDIA kernel module build skipped"; \
     fi
 
 # Install VS Code (offline preferred, online fallback)
