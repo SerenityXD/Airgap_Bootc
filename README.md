@@ -44,7 +44,7 @@ Build a fully offline, air-gapped installer ISO by embedding a prebuilt bootc co
   ```
 
 ## Requirements
-- Host OS: Linux (Fedora/RHEL/Ubuntu) or WSL2 on Windows
+- Host OS: Linux (Fedora/RHEL/Ubuntu) or WSL2 on Windows (Ensure that you are on the latest possible version)
 - Tools: `podman`, `sudo` for rootful podman, `curl`, `bash`
 - Image builder: pulls `quay.io/centos-bootc/bootc-image-builder:latest` (cache or pre-pull if offline)
 - Disk: 70–130 GB free during build (image ~28 GB, OCI ~15 GB, ISO ~14 GB; add ~20 GB for offline packages)
