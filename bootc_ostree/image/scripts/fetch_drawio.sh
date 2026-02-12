@@ -18,16 +18,9 @@ echo ""
 mkdir -p "${OFFLINE_DIR}"
 cd "${OFFLINE_DIR}"
 
-# Get latest version if not specified
-if [ "${DRAWIO_VERSION}" = "latest" ]; then
-    echo "Fetching latest draw.io version..."
-    DRAWIO_VERSION=$(curl -sL https://api.github.com/repos/jgraph/drawio-desktop/releases/latest | grep -Po '"tag_name": "v\K[^"*]' || echo "24.7.17")
-    echo "  Latest version: ${DRAWIO_VERSION}"
-fi
-
 # Download draw.io RPM for Fedora
 echo "Downloading draw.io ${DRAWIO_VERSION}..."
-DRAWIO_URL="https://github.com/jgraph/drawio-desktop/releases/download/v${DRAWIO_VERSION}/drawio-x86_64-${DRAWIO_VERSION}.rpm"
+DRAWIO_URL="https://github.com/jgraph/drawio-desktop/releases/download/v29.3.6/drawio-x86_64-29.3.6.rpm"
 
 if curl -fL "${DRAWIO_URL}" -o "drawio-${DRAWIO_VERSION}.rpm"; then
     echo "  ✓ draw.io downloaded: drawio-${DRAWIO_VERSION}.rpm"

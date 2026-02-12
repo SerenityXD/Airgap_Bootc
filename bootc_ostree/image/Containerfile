@@ -259,12 +259,6 @@ RUN dnf -y --setopt=install_weak_deps=False install \
     dracut dracut-live \
     && dnf -y clean all && rm -rf /var/cache/dnf
 
-# Create directories for third-party packages and staged optional bundles
-RUN mkdir -p /tmp/rpms/{vscode,rpmfusion,winehq,docker-desktop,drawio} && \
-    mkdir -p /opt/prismlauncher /opt/offline/{openshift,crc} && \
-    mkdir -p /usr/local/bin/scvu && \
-    echo 'export PATH="/usr/local/bin/scvu:$PATH"' > /etc/profile.d/scvu-path.sh
-
 # Install OBS Studio and multimedia codecs (offline preferred, online fallback)
 COPY offline-repo/obs/ /tmp/rpms/obs/
 COPY offline-repo/rpmfusion/ /tmp/rpms/rpmfusion/
@@ -402,24 +396,9 @@ RUN if [ -n "$(ls -A /tmp/rpms/drawio/*.rpm 2>/dev/null)" ]; then \
 # Clean up RPM temp directory
 RUN rm -rf /tmp/rpms
 
-# Precreate baseline users for OCI archive installs
-RUN set -eux; \
-    for user in IAC AIBUser; do \
-        if id "$user" >/dev/null 2>&1; then \
-            echo "User $user already exists, skipping"; \
-        else \
-            useradd -m -s /bin/bash "$user"; \
-        fi; \
-    done; \
-    echo 'IAC:T@bleTennis0!04' | chpasswd || true; \
-    echo 'AIBUser:A!BUser' | chpasswd || true; \
-    usermod -aG wheel,docker IAC || true; \
-    usermod -aG docker AIBUser || true
-
-
 # Copy VS Code extensions
 RUN mkdir -p /opt/vscode-extensions
-COPY vscode-extensions/*.vsix /opt/vscode-extensions/
+COPY offline-repo/vscode-extensions/*.vsix /opt/vscode-extensions/
 # Extensions will be installed per-user via scvu-post-install.sh
 
 # Post-install scripts folder removed; using consolidated script only
@@ -434,13 +413,23 @@ COPY offline-repo/npm-packages/ /opt/npm-packages/
 # Create offline npm cache and install JS frameworks from cache
 RUN mkdir -p /opt/npm-packages && \
     set -eux; \
-    for pkg in create-react-app @vue/cli @angular/cli create-next-app vite webpack webpack-cli typescript ts-node jest mocha eslint prettier pnpm; do \
-        echo "Packing $pkg"; \
-        npm pack "$pkg" --pack-destination /opt/npm-packages || echo "Warning: npm pack failed for $pkg"; \
-    done; \
+    # If we already have cached tarballs (from offline-repo), prefer them and skip network operations
+    if ls /opt/npm-packages/*.tgz >/dev/null 2>&1; then \
+        echo "Using cached npm tarballs in /opt/npm-packages"; \
+    else \
+        echo "No cached npm tarballs found; attempting to fetch and pack (requires network)"; \
+        # Avoid writing to /root during build (some build environments make /root non-writable or non-dir)
+        export HOME=/tmp && mkdir -p /tmp/.npm && npm config set cache /tmp/.npm --global || true; \
+        for pkg in create-react-app @vue/cli @angular/cli create-next-app vite webpack webpack-cli typescript ts-node jest mocha eslint prettier pnpm; do \
+            echo "Packing $pkg"; \
+            npm pack "$pkg" --pack-destination /opt/npm-packages || echo "Warning: npm pack failed for $pkg"; \
+        done; \
+    fi; \
     if ls /opt/npm-packages/*.tgz >/dev/null 2>&1; then \
         echo "Installing JS frameworks from offline cache..."; \
-        npm install -g /opt/npm-packages/*.tgz || echo "Warning: npm install -g from cache failed"; \
+        # Ensure npm uses /tmp (some build envs make /root a file or non-writable) and set cache to /tmp/.npm
+        export HOME=/tmp && mkdir -p /tmp/.npm && npm config set cache /tmp/.npm --global || true; \
+        npm install -g --cache /tmp/.npm /opt/npm-packages/*.tgz || echo "Warning: npm install -g from cache failed"; \
     else \
         echo "No npm packages were cached; skipping global install"; \
     fi
@@ -756,7 +745,7 @@ create_aibuser() {
             mkdir -p "$AIB_HOME/Desktop"
             cp "$README_SRC" "$AIB_HOME/Desktop/SCVU-README.md"
             chown "$AIB_USER:$AIB_USER" "$AIB_HOME/Desktop/SCVU-README.md"
-            echo "  Copied README to $AIB_USER Desktop"
+            echo "  Copied README to AIBUSER Desktop"
         fi
     else
         echo "  Warning: failed to create user $AIB_USER"

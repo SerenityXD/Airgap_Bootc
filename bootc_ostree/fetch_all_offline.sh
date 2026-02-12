@@ -5,7 +5,8 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-FETCH_SCRIPTS_DIR="${SCRIPT_DIR}/fetch-scripts"
+FETCH_SCRIPTS_DIR="${SCRIPT_DIR}/image/scripts"
+echo "$FETCH_SCRIPTS_DIR"
 
 echo "========================================"
 echo "Fetch All Offline Packages"
