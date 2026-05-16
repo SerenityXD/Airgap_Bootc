@@ -1,0 +1,9 @@
+[customizations.installer.kickstart]
+# Empty kickstart enables Anaconda interactive mode
+# When bootc-image-builder encounters only ostreecontainer directive
+# with no other kickstart content, Anaconda enters interactive installation
+contents = ""
+
+[customizations.kernel]
+# USB boot reliability tuning for intermittent reset/high-speed USB issues.
+append = "usbcore.autosuspend=-1 usbcore.use_both_schemes=1 rootdelay=20 rd.timeout=120"

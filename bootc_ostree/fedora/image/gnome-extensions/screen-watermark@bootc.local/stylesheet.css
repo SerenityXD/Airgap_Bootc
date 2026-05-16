@@ -1,0 +1,16 @@
+/*
+ * screen-watermark@bootc.local — stylesheet
+ *
+ * Applies to every .watermark-label St.Label created by extension.js.
+ * Adjust font-size and color here to taste.
+ */
+
+.watermark-label {
+    font-family:  "Liberation Sans", "DejaVu Sans", sans-serif;
+    font-size:    20pt;
+    font-weight:  bold;
+    color:        #ffffff;
+    /* text-shadow creates a dark outline so the text is readable on any wallpaper */
+    text-shadow:  1px  1px 3px rgba(0,0,0,0.85),
+                 -1px -1px 3px rgba(0,0,0,0.85);
+}

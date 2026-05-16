@@ -1,0 +1,8 @@
+{
+  "uuid": "screen-watermark@bootc.local",
+  "name": "Screen Watermark",
+  "description": "Displays a persistent tiled watermark showing username, hostname, and login timestamp across the screen.",
+  "version": 1,
+  "shell-version": ["45", "46", "47", "48", "49"],
+  "url": ""
+}

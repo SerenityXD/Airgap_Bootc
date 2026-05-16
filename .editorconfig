@@ -1,0 +1,64 @@
+# EditorConfig helps maintain consistent coding styles across different editors and IDEs
+# See https://editorconfig.org for more information
+
+root = true
+
+# Default settings for all files
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+# Shell scripts
+[*.sh]
+indent_style = space
+indent_size = 4
+max_line_length = 120
+
+# Bash-specific settings (same as .sh)
+[*.bash]
+indent_style = space
+indent_size = 4
+max_line_length = 120
+
+# Makefiles (must use tabs)
+[Makefile]
+indent_style = tab
+
+# Markdown files
+[*.md]
+indent_style = space
+indent_size = 2
+max_line_length = 100
+trim_trailing_whitespace = false  # Preserve trailing spaces in markdown (for line breaks)
+
+# YAML/TOML configuration files
+[*.{yml,yaml}]
+indent_style = space
+indent_size = 2
+
+[*.toml]
+indent_style = space
+indent_size = 2
+
+# Dockerfile
+[Dockerfile]
+indent_style = space
+indent_size = 4
+
+# JSON files
+[*.json]
+indent_style = space
+indent_size = 2
+
+# Python files (if any)
+[*.py]
+indent_style = space
+indent_size = 4
+max_line_length = 88  # Black formatter default
+
+# Ignore generated files
+[{output,*.{iso,oci,log}}]
+insert_final_newline = false
+trim_trailing_whitespace = false

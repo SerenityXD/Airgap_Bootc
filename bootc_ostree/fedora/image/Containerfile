@@ -1,0 +1,2226 @@
+# syntax=docker/dockerfile:1.4
+# Bootc system image for air-gapped desktop workstation
+# Includes: GNOME desktop, dev tools, NVIDIA/CUDA, ML, multimedia, Docker Desktop, VS Code
+
+FROM quay.io/fedora/fedora-bootc:44
+
+# Use bash with pipefail for safer RUN blocks (this Containerfile relies on bash features).
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+# Build-time optimization flags (optional packages are included unless excluded)
+ARG EXCLUDE_BLENDER=no
+ARG EXCLUDE_DOCKER_DESKTOP=no
+ARG EXCLUDE_GIMP_KRITA=no
+ARG EXCLUDE_RATIONS=no
+ARG EXCLUDE_CUDA_TOOLKIT=no
+
+# System metadata
+LABEL name="BOOTC Bootc Workstation"
+LABEL version="1.0"
+LABEL description="Air-gapped desktop workstation with dev tools, NVIDIA, ML, multimedia"
+
+# Set timezone (change Asia/Singapore to your preferred timezone)
+RUN ln -sf /usr/share/zoneinfo/Asia/Singapore /etc/localtime && \
+    echo "Asia/Singapore" > /etc/timezone
+
+# Configure NTP time servers
+RUN mkdir -p /etc/chrony.d && \
+    echo "# Custom NTP servers" > /etc/chrony.d/custom-servers.conf && \
+    echo "server time.windows.com iburst" >> /etc/chrony.d/custom-servers.conf && \
+    echo "server time.nist.gov iburst" >> /etc/chrony.d/custom-servers.conf && \
+    echo "server pool.ntp.org iburst" >> /etc/chrony.d/custom-servers.conf
+
+# Run an initial ntpdate sync before chronyd takes over continuous timekeeping.
+RUN mkdir -p /usr/local/bin/bootc /usr/lib/systemd/system && \
+    printf '%s\n' \
+        '#!/usr/bin/env bash' \
+        'set -euo pipefail' \
+        '' \
+        'mapfile -t ntp_servers < <(awk '\''$1 == "server" { print $2 }'\'' /etc/chrony.d/custom-servers.conf 2>/dev/null)' \
+        '' \
+        'if [ ${#ntp_servers[@]} -eq 0 ]; then' \
+        '    ntp_servers=(time.windows.com time.nist.gov pool.ntp.org)' \
+        'fi' \
+        '' \
+        'exec /usr/sbin/ntpdate -ub "${ntp_servers[@]}"' \
+        > /usr/local/bin/bootc/ntpdate-sync.sh && \
+    chmod 0755 /usr/local/bin/bootc/ntpdate-sync.sh && \
+    printf '%s\n' \
+        '[Unit]' \
+        'Description=Initial NTP sync before chronyd' \
+        'Wants=network-online.target' \
+        'After=network-online.target' \
+        'Before=chronyd.service' \
+        'ConditionPathExists=/usr/sbin/ntpdate' \
+        '' \
+        '[Service]' \
+        'Type=oneshot' \
+        'ExecStart=/usr/local/bin/bootc/ntpdate-sync.sh' \
+        'RemainAfterExit=yes' \
+        '' \
+        '[Install]' \
+        'WantedBy=multi-user.target' \
+        > /usr/lib/systemd/system/ntpdate-sync.service
+
+# Trust the bundled enterprise CA
+COPY ca-bundle.crt /etc/pki/ca-trust/source/anchors/bootc-local-ca.crt
+RUN update-ca-trust
+
+# Minimize dnf footprint and locales
+RUN sed -i '/^tsflags/ d' /etc/dnf/dnf.conf && echo 'tsflags=nodocs' >> /etc/dnf/dnf.conf && \
+    dnf -y install glibc-minimal-langpack langpacks-en || true && \
+    dnf -y remove glibc-all-langpacks || true && \
+    dnf -y clean all && rm -rf /var/cache/dnf
+
+# Install GNOME Desktop Environment and base system
+RUN echo "Installing GNOME desktop environment" && \
+    dnf -y --setopt=install_weak_deps=False install \
+    gnome-shell gnome-session gdm gnome-control-center gnome-terminal gnome-text-editor nautilus gnome-system-monitor gnome-disk-utility gnome-tweaks evince eog file-roller gnome-connections gnome-shell-extension-appindicator gvfs-fuse \
+    # GNOME Nautilus context menu and extensions
+    nautilus-open-terminal sushi \
+    # Display server
+    xorg-x11-server-Xorg \
+    mesa-dri-drivers \
+    # Additional tools
+    make gcc gcc-c++ cmake automake autoconf \
+    python3-pip python3-devel \
+    git fastfetch \
+    network-manager-applet \
+    kernel-devel kernel-modules-extra \
+    power-profiles-daemon \
+    ntpdate \
+    traceroute \
+    # Audio stack (Intel firmware + PipeWire ALSA/PulseAudio bridges)
+    intel-audio-firmware \
+    alsa-sof-firmware \
+    alsa-firmware \
+    pipewire-alsa \
+    pipewire-pulseaudio \
+    wireplumber \
+    alsa-utils \
+    # Container tools
+    slirp4netns conntrack-tools bridge-utils fuse-overlayfs podman \
+    # Remote desktop
+    xrdp xorgxrdp \
+    # Windows network discovery and file sharing
+    samba samba-client samba-common cifs-utils \
+    avahi avahi-tools nss-mdns \
+    wsdd \
+    # Desktop SMB/Windows network browsing support
+    gvfs-smb \
+    && dnf -y clean all && rm -rf /var/cache/dnf
+
+# Enable network discovery services and time synchronization
+RUN systemctl enable ntpdate-sync.service && \
+    systemctl enable chronyd.service && \
+    systemctl enable avahi-daemon.service && \
+    systemctl enable wsdd.service && \
+    systemctl enable smb.service && \
+    systemctl enable nmb.service
+
+# Configure Samba for Windows network discovery
+RUN mkdir -p /etc/samba && \
+    cat > /etc/samba/smb.conf <<'EOF'
+[global]
+   workgroup = WORKGROUP
+   server string = BOOTC Bootc Workstation
+   security = user
+   map to guest = Never
+   dns proxy = no
+   
+   # Network discovery settings (server side - be visible to Windows)
+   local master = yes
+   preferred master = yes
+   os level = 35
+   
+   # Client browsing settings (discover Windows machines)
+   name resolve order = bcast host lmhosts wins
+   client use spnego = yes
+   client ntlmv2 auth = yes
+   
+   # Enable WSD/LLMNR for Windows 10+ discovery
+   multicast dns register = yes
+   
+   # Logging
+   log file = /var/log/samba/log.%m
+   max log size = 50
+   
+   # Sync Linux password changes into the Samba password database
+   unix password sync = yes
+   passwd program = /usr/bin/passwd %u
+   pam password change = yes
+
+   # Performance and compatibility
+   server min protocol = SMB2
+   client min protocol = SMB2
+   
+   # Allow browsing of Windows workgroups and computers
+   remote browse sync = yes
+   remote announce = 255.255.255.255/WORKGROUP
+   
+   # User shares (allow regular users to create and manage shares)
+   usershare path = /var/lib/samba/usershares
+   usershare max shares = 100
+   usershare allow guests = no
+   usershare owner only = yes
+   
+[homes]
+   comment = User Home Directories
+   browseable = yes
+   read only = no
+   writable = yes
+   valid users = %S
+   create mask = 0644
+   directory mask = 0755
+   path = %H
+
+[UserHomes]
+   comment = All User Home Directories
+   path = /home
+   browseable = yes
+   read only = no
+   guest ok = no
+   create mask = 0644
+   directory mask = 0755
+
+# Example share (commented out - users can enable as needed)
+# [Public]
+#    comment = Public Share
+#    path = /srv/samba/public
+#    browseable = yes
+#    read only = no
+#    guest ok = yes
+#    create mask = 0644
+#    directory mask = 0755
+EOF
+
+# Set default home directory permissions to 0755 so Samba can serve cross-user access
+# (individual user authentication via Samba still required; Linux FS governs reads)
+RUN sed -i 's/^HOME_MODE.*/HOME_MODE 0755/' /etc/login.defs
+
+# Set up usershares directory with proper permissions
+RUN mkdir -p /var/lib/samba/usershares && \
+    chmod 1770 /var/lib/samba/usershares && \
+    chown root:root /var/lib/samba/usershares
+
+# SELinux boolean service: samba_enable_home_dirs must be on for Samba to serve /home/*/
+# The boolean lives in /var/lib/selinux/ (runtime-writable), so we use a oneshot unit
+# that runs before smb.service on every boot and sets it persistently.
+RUN mkdir -p /usr/lib/systemd/system && \
+    cat > /usr/lib/systemd/system/samba-selinux-setup.service <<'SEEOF'
+[Unit]
+Description=Set SELinux booleans required for Samba home-directory sharing
+DefaultDependencies=no
+Before=smb.service nmb.service
+After=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/setsebool -P samba_enable_home_dirs 1
+
+[Install]
+WantedBy=multi-user.target
+SEEOF
+RUN systemctl enable samba-selinux-setup.service
+
+# Create Avahi service file for SMB/CIFS advertisement
+RUN mkdir -p /etc/avahi/services && \
+    cat > /etc/avahi/services/smb.service <<'EOF'
+<?xml version="1.0" standalone='no'?>
+<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
+<service-group>
+  <name replace-wildcards="yes">%h</name>
+  <service>
+    <type>_smb._tcp</type>
+    <port>445</port>
+  </service>
+  <service>
+    <type>_device-info._tcp</type>
+    <port>0</port>
+    <txt-record>model=LinuxWorkstation</txt-record>
+  </service>
+</service-group>
+EOF
+
+# Install multimedia and creator tools
+RUN dnf -y --setopt=install_weak_deps=False install \
+    # Office and productivity
+    libreoffice \
+    # GIS
+    qgis python3-qgis \
+    # Web browsers
+    firefox liberation-fonts \
+    && dnf -y clean all && rm -rf /var/cache/dnf
+
+# Install offline wallpapers. Also register them and set a default via dconf for GNOME.
+RUN --mount=type=bind,source=offline-repo/wallpapers,target=/tmp/offline/wallpapers,relabel=shared,readonly \
+    mkdir -p /usr/share/backgrounds/bootc && \
+    mapfile -t WALLPAPER_FILES < <(find /tmp/offline/wallpapers -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.webp' -o -iname '*.bmp' \) | sort) && \
+    if [ ${#WALLPAPER_FILES[@]} -eq 0 ]; then \
+        echo "No offline wallpapers found in /tmp/offline/wallpapers; keeping distro default"; \
+    else \
+        echo "Installing ${#WALLPAPER_FILES[@]} offline wallpapers"; \
+        mkdir -p /usr/share/gnome-background-properties /etc/dconf/profile /etc/dconf/db/local.d; \
+        printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' '<!DOCTYPE wallpapers SYSTEM "gnome-wp-list.dtd">' '<wallpapers>' > /usr/share/gnome-background-properties/bootc-wallpapers.xml; \
+        default_wallpaper=''; \
+        idx=0; \
+        for src in "${WALLPAPER_FILES[@]}"; do \
+            idx=$((idx + 1)); \
+            base_name=$(basename "$src"); \
+            dest="/usr/share/backgrounds/bootc/$(printf '%03d' "$idx")-${base_name}"; \
+            install -m 0644 "$src" "$dest"; \
+            [ -z "$default_wallpaper" ] && default_wallpaper="$dest"; \
+            printf '%s\n' \
+                '  <wallpaper deleted="false">' \
+                "    <name>${base_name}</name>" \
+                "    <filename>${dest}</filename>" \
+                '    <options>zoom</options>' \
+                '    <shade_type>solid</shade_type>' \
+                '    <pcolor>#000000</pcolor>' \
+                '    <scolor>#000000</scolor>' \
+                '  </wallpaper>' >> /usr/share/gnome-background-properties/bootc-wallpapers.xml; \
+        done; \
+        printf '%s\n' '</wallpapers>' >> /usr/share/gnome-background-properties/bootc-wallpapers.xml; \
+        printf '%s\n' 'user-db:user' 'system-db:local' > /etc/dconf/profile/user; \
+        printf '%s\n' \
+            '[org/gnome/desktop/background]' \
+            "picture-uri='file://${default_wallpaper}'" \
+            "picture-uri-dark='file://${default_wallpaper}'" \
+            "picture-options='zoom'" > /etc/dconf/db/local.d/00-bootc-background; \
+        dconf update; \
+        echo "Default wallpaper: $default_wallpaper"; \
+    fi
+
+# ---------------------------------------------------------------------------
+# Screen-watermark GNOME Shell extension
+# Displays a persistent tiled diagonal overlay: username · hostname · login time
+# ---------------------------------------------------------------------------
+# Enable the extension system-wide via two complementary mechanisms:
+#
+#  1. dconf system-db default  — applies when the user has NO existing
+#     enabled-extensions value (e.g. brand-new accounts).
+#
+#  2. XDG autostart entry      — runs at every GNOME session start and calls
+#     `gnome-extensions enable` which *appends* to the user's extension list.
+#     This is the reliable path for users whose dconf user-db already has an
+#     enabled-extensions entry (overrides the system-db default).
+RUN --mount=type=bind,source=gnome-extensions/screen-watermark@bootc.local,target=/tmp/gnome-ext/screen-watermark@bootc.local,relabel=shared,readonly \
+    mkdir -p /usr/share/gnome-shell/extensions && \
+    cp -a /tmp/gnome-ext/screen-watermark@bootc.local /usr/share/gnome-shell/extensions/screen-watermark@bootc.local && \
+    mkdir -p /etc/dconf/db/local.d /etc/xdg/autostart && \
+    printf '%s\n' \
+        '[org/gnome/shell]' \
+        "enabled-extensions=['screen-watermark@bootc.local']" \
+        > /etc/dconf/db/local.d/01-bootc-extensions && \
+    dconf update && \
+    printf '%s\n' \
+        '[Desktop Entry]' \
+        'Type=Application' \
+        'Name=BOOTC Screen Watermark' \
+        'Comment=Ensures the persistent screen watermark extension is active' \
+        'Exec=/bin/bash -c "sleep 4 && gnome-extensions enable screen-watermark@bootc.local"' \
+        'NoDisplay=true' \
+        'X-GNOME-Autostart-enabled=true' \
+        'X-GNOME-Autostart-Delay=0' \
+        > /etc/xdg/autostart/bootc-watermark-enable.desktop && \
+    echo "✓ GNOME extension setup complete (unconditional - always installed)"
+
+# Install rations (portablemc Minecraft launcher + offline game files) - OPTIONAL
+# To exclude, use: podman build --build-arg EXCLUDE_RATIONS=yes
+# rations.zip contains pre-seeded .minecraft files; portablemc is the CLI launcher binary.
+COPY offline-repo/rations/ /opt/rations/
+RUN if [ "$EXCLUDE_RATIONS" != "yes" ]; then \
+        echo "Installing portablemc dependencies..."; \
+        dnf -y --setopt=install_weak_deps=False install \
+            openssl-libs zlib unzip && \
+        dnf -y clean all && rm -rf /var/cache/dnf; \
+        echo "Installing portablemc binary..."; \
+        install -m 0755 /opt/rations/portablemc /usr/local/bin/portablemc; \
+        echo "Extracting rations.zip game files to /opt/rations/..."; \
+        unzip -o /opt/rations/rations.zip -d /opt/rations/ && \
+        rm -f /opt/rations/rations.zip && \
+        rm -f /opt/rations/portablemc; \
+        echo "Creating portablemc wrapper..."; \
+        printf '%s\n' \
+            '#!/usr/bin/env bash' \
+            'exec /usr/local/bin/portablemc --main-dir /opt/rations "$@"' \
+            > /usr/local/bin/minecraft && \
+        chmod +x /usr/local/bin/minecraft; \
+        echo "portablemc and rations installed successfully"; \
+    else \
+        echo "Rations (portablemc) skipped (set --build-arg EXCLUDE_RATIONS=yes to exclude)"; \
+    fi
+
+# Install Google Chrome (resolve dependencies via dnf instead of raw rpm -i)
+# Import Google's signing key before installing so dnf can verify the RPM signature.
+RUN dnf -y --setopt=install_weak_deps=False install wget xdg-utils && \
+    rpm --import https://dl.google.com/linux/linux_signing_key.pub && \
+    curl --fail --show-error --location --retry 5 --retry-delay 3 --retry-connrefused \
+    https://dl.google.com/linux/direct/google-chrome-stable_current_x86_64.rpm \
+    -o /tmp/google-chrome.rpm && \
+    dnf -y install /tmp/google-chrome.rpm && \
+    rm -f /tmp/google-chrome.rpm && \
+    dnf -y clean all && rm -rf /var/cache/dnf
+
+# Install Python versions: core versions only (3.11-3.13 for compatibility and latest features)
+# To include older Python 3.9-3.10, use: podman build --build-arg INCLUDE_ALL_PYTHON_VERSIONS=yes
+RUN dnf -y --setopt=install_weak_deps=False install \
+    python3.11 python3.12 python3.13 \
+    # Python ML/data science from Fedora repos
+    python3-numpy python3-scipy python3-pandas \
+    python3-matplotlib python3-scikit-learn \
+    python3-jupyter-core python3-notebook python3-ipython \
+    python3-seaborn python3-opencv \
+    hdf5 hdf5-devel openblas-devel \
+    lapack lapack-devel \
+    # Triton Inference Server client dependencies
+    python3-protobuf python3-grpcio python3-requests \
+    && dnf -y clean all && rm -rf /var/cache/dnf
+
+# Install Node.js tools, graphics/database apps, filesystem, and boot packages
+RUN dnf -y --setopt=install_weak_deps=False install \
+    nodejs npm yarn \
+    sqlite sqlite-devel sqlitebrowser \
+    ntfs-3g ntfsprogs exfatprogs \
+    e2fsprogs btrfs-progs xfsprogs f2fs-tools dosfstools \
+    grub2-pc grub2-pc-modules \
+    grub2-efi-x64 grub2-efi-x64-modules grub2-efi-x64-cdboot \
+    grub2-efi-ia32 grub2-efi-ia32-cdboot \
+    grub2-tools grub2-tools-efi \
+    syslinux efibootmgr \
+    shim-x64 shim-ia32 \
+    dracut dracut-live \
+    && dnf -y clean all && rm -rf /var/cache/dnf
+
+# Optionally install Blender 4.2 LTS (official portable tarball, offline preferred)
+# Blender 4.2.x was never packaged for Fedora 43, so we use the official blender.org
+# portable Linux release extracted to /opt/blender-4.2.
+COPY offline-repo/blender/ /tmp/blender/
+RUN if [ "$EXCLUDE_BLENDER" != "yes" ]; then \
+        install_blender_bundle() { \
+            local tarball_path="$1"; \
+            mkdir -p /opt/blender-4.2; \
+            tar -xJf "$tarball_path" -C /opt/blender-4.2 --strip-components=1; \
+            ln -sf /opt/blender-4.2/blender /usr/local/bin/blender; \
+            if [ -f /opt/blender-4.2/blender.desktop ]; then \
+                install -Dm0644 /opt/blender-4.2/blender.desktop /usr/share/applications/blender.desktop; \
+            fi; \
+            if [ -f /opt/blender-4.2/blender.svg ]; then \
+                install -Dm0644 /opt/blender-4.2/blender.svg /usr/share/icons/hicolor/scalable/apps/blender.svg; \
+            fi; \
+            if [ -f /opt/blender-4.2/blender-symbolic.svg ]; then \
+                install -Dm0644 /opt/blender-4.2/blender-symbolic.svg /usr/share/icons/hicolor/symbolic/apps/blender-symbolic.svg; \
+            fi; \
+        }; \
+        TARBALL=$(ls /tmp/blender/blender-4.2*.tar.xz 2>/dev/null | head -1); \
+        if [ -n "$TARBALL" ]; then \
+            echo "Installing Blender 4.2 from offline tarball: ${TARBALL}..."; \
+            install_blender_bundle "$TARBALL"; \
+            echo "Blender installed to /opt/blender-4.2 with desktop launcher"; \
+        else \
+            echo "Offline Blender 4.2 tarball not found; downloading from blender.org..."; \
+            BLENDER_VER="4.2.9"; \
+            curl -fL "https://download.blender.org/release/Blender4.2/blender-${BLENDER_VER}-linux-x64.tar.xz" \
+                -o /tmp/blender.tar.xz || { echo "Warning: Blender download failed"; true; }; \
+            if [ -f /tmp/blender.tar.xz ]; then \
+                install_blender_bundle /tmp/blender.tar.xz; \
+                rm -f /tmp/blender.tar.xz; \
+            fi; \
+        fi; \
+    else \
+        echo "Blender skipped (set --build-arg EXCLUDE_BLENDER=yes to exclude)"; \
+    fi
+
+# Install OBS Studio and multimedia codecs (offline preferred, online fallback)
+RUN --mount=type=bind,source=offline-repo/obs,target=/tmp/offline/obs,relabel=shared,readonly \
+    --mount=type=bind,source=offline-repo/rpmfusion,target=/tmp/offline/rpmfusion,relabel=shared,readonly \
+    install_from_local_rpm_repo() { \
+        local repo_id="$1"; \
+        local repo_dir="$2"; \
+        shift 2; \
+        local temp_repo_dir install_rc; \
+        local -A seen_packages=(); \
+        local -a package_names=(); \
+        local pattern rpm_path package_name; \
+        for pattern in "$@"; do \
+            rpm_path=$(find "$repo_dir" -maxdepth 1 -type f -name "$pattern" | sort -V | tail -n 1); \
+            if [ -z "$rpm_path" ]; then \
+                continue; \
+            fi; \
+            package_name=$(rpm -qp --qf '%{NAME}\n' "$rpm_path" 2>/dev/null || true); \
+            if [ -n "$package_name" ] && [ -z "${seen_packages[$package_name]:-}" ]; then \
+                seen_packages[$package_name]=1; \
+                package_names+=("$package_name"); \
+            fi; \
+        done; \
+        if [ ${#package_names[@]} -eq 0 ]; then \
+            echo "No curated packages found in $repo_dir"; \
+            return 1; \
+        fi; \
+        echo "Preparing local RPM repo $repo_id from $repo_dir"; \
+        temp_repo_dir=$(mktemp -d "/tmp/${repo_id}.XXXXXX"); \
+        cp -a "$repo_dir"/. "$temp_repo_dir"/; \
+        dnf -y --setopt=install_weak_deps=False install createrepo_c && \
+        createrepo_c "$temp_repo_dir" >/dev/null && \
+        echo "Installing curated packages from $repo_id: ${package_names[*]}" && \
+        dnf -y --setopt=install_weak_deps=False \
+            --repofrompath="$repo_id,file://$temp_repo_dir" \
+            --setopt="$repo_id.gpgcheck=0" \
+            --setopt="$repo_id.localpkg_gpgcheck=0" \
+            --enablerepo="$repo_id" \
+            install --best --skip-broken "${package_names[@]}"; \
+        install_rc=$?; \
+        rm -rf "$temp_repo_dir"; \
+        return $install_rc; \
+    }; \
+    offline_installed=0; \
+    if compgen -G "/tmp/offline/obs/*.rpm" >/dev/null; then \
+        echo "Attempting curated OBS install from offline repo..."; \
+        if install_from_local_rpm_repo obs-local /tmp/offline/obs \
+            'ffmpeg-[0-9]*.x86_64.rpm' \
+            'ffmpeg-libs-[0-9]*.x86_64.rpm' \
+            'lame-libs-[0-9]*.x86_64.rpm' \
+            'libheif-freeworld-[0-9]*.x86_64.rpm' \
+            'obs-studio-[0-9]*.x86_64.rpm' \
+            'obs-studio-libs-[0-9]*.x86_64.rpm' \
+            'obs-studio-plugin-*.x86_64.rpm' \
+            'vlc-libs-[0-9]*.x86_64.rpm' \
+            'x264-libs-[0-9]*.x86_64.rpm' \
+            'x265-libs-[0-9]*.x86_64.rpm' \
+            'lame-[0-9]*.x86_64.rpm' \
+            'gstreamer1-plugins-bad-free-extras-[0-9]*.x86_64.rpm' \
+            'gstreamer1-plugins-ugly-[0-9]*.x86_64.rpm' \
+            'gstreamer1-libav-[0-9]*.x86_64.rpm' \
+            'libavcodec-freeworld-[0-9]*.x86_64.rpm' \
+            'libavformat-freeworld-[0-9]*.x86_64.rpm' \
+            'libavutil-freeworld-[0-9]*.x86_64.rpm' \
+            'libswscale-freeworld-[0-9]*.x86_64.rpm' \
+            'libswresample-freeworld-[0-9]*.x86_64.rpm'; then \
+            offline_installed=1; \
+            echo "OBS Studio installed successfully from curated offline packages"; \
+        else \
+            echo "Warning: curated OBS offline install failed, falling back to online repos"; \
+        fi; \
+    elif compgen -G "/tmp/offline/rpmfusion/*.rpm" >/dev/null; then \
+        echo "Attempting curated RPM Fusion install from offline repo..."; \
+        if install_from_local_rpm_repo rpmfusion-local /tmp/offline/rpmfusion \
+            'ffmpeg-[0-9]*.x86_64.rpm' \
+            'ffmpeg-libs-[0-9]*.x86_64.rpm' \
+            'mpv-[0-9]*.x86_64.rpm' \
+            'vlc-[0-9]*.x86_64.rpm' \
+            'x264-*.x86_64.rpm' \
+            'x265-*.x86_64.rpm' \
+            'lame-[0-9]*.x86_64.rpm' \
+            'gstreamer1-plugins-bad-free-extras-[0-9]*.x86_64.rpm' \
+            'gstreamer1-plugins-ugly-[0-9]*.x86_64.rpm' \
+            'gstreamer1-libav-[0-9]*.x86_64.rpm' \
+            'libavcodec-freeworld-[0-9]*.x86_64.rpm' \
+            'libavformat-freeworld-[0-9]*.x86_64.rpm' \
+            'libavutil-freeworld-[0-9]*.x86_64.rpm' \
+            'libswscale-freeworld-[0-9]*.x86_64.rpm' \
+            'libswresample-freeworld-[0-9]*.x86_64.rpm'; then \
+            offline_installed=1; \
+            echo "RPM Fusion multimedia packages installed from curated offline packages"; \
+        else \
+            echo "Warning: curated RPM Fusion offline install failed, falling back to online repos"; \
+        fi; \
+    fi; \
+    if [ "$offline_installed" -ne 1 ]; then \
+        echo "Offline OBS/RPM Fusion packages not usable, attempting online install..."; \
+        dnf -y --setopt=install_weak_deps=False install \
+            https://download1.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm \
+            https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm || true; \
+        dnf -y --setopt=install_weak_deps=False swap --allowerasing ffmpeg-free ffmpeg || true; \
+        dnf -y --setopt=install_weak_deps=False install --best --skip-broken ffmpeg vlc obs-studio \
+            gstreamer1-plugins-bad-free-extras gstreamer1-plugins-ugly \
+            gstreamer1-plugin-openh264 gstreamer1-libav lame x264 x265 \
+            --allowerasing || true; \
+    fi && \
+    dnf -y clean all && rm -rf /var/cache/dnf && \
+    dnf -y remove createrepo_c >/dev/null 2>&1 || true && \
+    dnf -y clean all && rm -rf /var/cache/dnf
+
+# Install NVIDIA drivers from RPM Fusion
+# First install RPM Fusion repository (if not already installed) and akmods infrastructure
+RUN (dnf -y --setopt=install_weak_deps=False install \
+        https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm || \
+    echo "RPM Fusion nonfree repository already installed or installation failed") && \
+    dnf -y --setopt=install_weak_deps=False install \
+        akmods \
+        kernel-headers && \
+    dnf -y clean all && rm -rf /var/cache/dnf
+
+# Install NVIDIA driver packages
+RUN dnf -y --setopt=install_weak_deps=False install --best \
+        akmod-nvidia \
+        xorg-x11-drv-nvidia \
+    xorg-x11-drv-nvidia-power \
+        xorg-x11-drv-nvidia-cuda \
+        xorg-x11-drv-nvidia-cuda-libs \
+        nvidia-settings \
+        nvidia-persistenced && \
+    dnf -y clean all && rm -rf /var/cache/dnf
+
+# Build NVIDIA kernel modules at container build time for bootc read-only filesystem
+# This prevents runtime akmods failures on immutable /usr
+RUN if [ -f /usr/sbin/akmods ]; then \
+        echo "Building NVIDIA kernel modules for installed kernel(s)..."; \
+        KERNEL_VERSIONS=$(rpm -q kernel --qf '%{VERSION}-%{RELEASE}.%{ARCH}\n' 2>/dev/null); \
+        if [ -n "$KERNEL_VERSIONS" ]; then \
+            echo "Found kernel version(s):"; \
+            echo "$KERNEL_VERSIONS"; \
+            echo "Verifying build dependencies..."; \
+            rpm -q gcc make kernel-devel kernel-headers akmods || echo "Warning: some build dependencies missing"; \
+            if akmods --force; then \
+                echo "NVIDIA kernel modules built successfully for all kernels"; \
+                echo "Verifying nvidia.ko module presence..."; \
+                for kver in $KERNEL_VERSIONS; do \
+                    if [ -f "/usr/lib/modules/$kver/extra/nvidia/nvidia.ko" ] || \
+                       [ -f "/usr/lib/modules/$kver/extra/nvidia/nvidia.ko.xz" ]; then \
+                        echo "✓ nvidia.ko found for kernel $kver"; \
+                    else \
+                        echo "✗ Warning: nvidia.ko NOT found for kernel $kver"; \
+                        find /usr/lib/modules/$kver -name "nvidia*.ko*" 2>/dev/null || echo "  No NVIDIA modules found"; \
+                    fi; \
+                done; \
+                echo "Writing nouveau blacklist and NVIDIA power-management config..."; \
+                mkdir -p /etc/modprobe.d; \
+                printf '%s\n' \
+                    '# Blacklist nouveau to prevent conflicts with NVIDIA proprietary driver' \
+                    'blacklist nouveau' \
+                    'options nouveau modeset=0' \
+                    > /etc/modprobe.d/blacklist-nouveau.conf; \
+                printf '%s\n' \
+                    '# NVIDIA power management for Wayland suspend/resume and lockscreen icon stability' \
+                    'options nvidia_drm modeset=1' \
+                    'options nvidia_drm fbdev=1' \
+                    'options nvidia NVreg_PreserveVideoMemoryAllocations=1' \
+                    'options nvidia NVreg_TemporaryFilePath=/var/tmp' \
+                    'options nvidia NVreg_EnableGpuFirmware=0' \
+                    > /etc/modprobe.d/nvidia-pm.conf; \
+                echo "Regenerating initramfs for all kernels with NVIDIA modules..."; \
+                dracut -f --regenerate-all && echo "Initramfs regeneration complete for all kernels" || \
+                echo "Warning: dracut regeneration failed for one or more kernels, NVIDIA may not load at boot"; \
+            else \
+                echo "Warning: akmods failed to build NVIDIA modules"; \
+                echo "NVIDIA drivers may not function properly in the installed system"; \
+            fi; \
+        else \
+            echo "Warning: No kernel packages found, skipping akmods build"; \
+        fi; \
+    else \
+        echo "Warning: akmods not found, NVIDIA kernel module build skipped"; \
+    fi
+
+# USB boot reliability and strict nouveau blacklist (applies regardless of akmods result)
+RUN mkdir -p /etc/modprobe.d /etc/dracut.conf.d && \
+    printf '%s\n' \
+        '# Additional hard block for nouveau module autoload' \
+        'install nouveau /bin/false' \
+        'alias nouveau off' \
+        > /etc/modprobe.d/blacklist-nouveau-extra.conf && \
+    printf '%s\n' \
+        '# Improve root device wait behavior when USB media intermittently resets' \
+        'rootdelay="20"' \
+        'rd.timeout="120"' \
+        > /etc/dracut.conf.d/10-bootc-usb-reliability.conf
+
+# Install CUDA Toolkit - OPTIONAL (adds ~1GB)
+# To exclude, use: podman build --build-arg EXCLUDE_CUDA_TOOLKIT=yes
+# Note: CUDA toolkit enables nvcc compiler and CUDA development libraries.
+# ML frameworks (PyTorch, TensorFlow) can be installed post-boot via pip without precaching wheels.
+# cuDNN is not included as it requires NVIDIA registration; install manually if needed.
+# Offline packages are preferred if available; falls back to online repository if not.
+RUN --mount=type=bind,source=offline-repo/cuda,target=/tmp/offline/cuda,relabel=shared,readonly \
+    if [ "$EXCLUDE_CUDA_TOOLKIT" != "yes" ]; then \
+        offline_installed=0; \
+        if compgen -G "/tmp/offline/cuda/*.rpm" >/dev/null; then \
+            echo "Attempting curated CUDA install from offline repo..."; \
+            mkdir -p /tmp/cuda-repo && \
+            cp -a /tmp/offline/cuda/. /tmp/cuda-repo/ && \
+            if dnf -y --setopt=install_weak_deps=False install createrepo_c >/dev/null 2>&1; then \
+                createrepo_c /tmp/cuda-repo >/dev/null 2>&1 && \
+                dnf -y --setopt=install_weak_deps=False \
+                    --repofrompath="cuda-local,file:///tmp/cuda-repo" \
+                    --setopt="cuda-local.gpgcheck=0" \
+                    --enablerepo="cuda-local" \
+                    install --best --skip-broken \
+                        cuda-toolkit \
+                    && offline_installed=1 && echo "CUDA packages installed successfully from offline repo" \
+                || echo "Warning: curated CUDA offline install failed, falling back to online"; \
+                dnf -y remove createrepo_c >/dev/null 2>&1 || true; \
+            fi; \
+            rm -rf /tmp/cuda-repo; \
+        else \
+            echo "Offline CUDA packages not found in cache"; \
+        fi; \
+        if [ "$offline_installed" -ne 1 ]; then \
+            echo "Attempting CUDA install from online NVIDIA repository..."; \
+            mkdir -p /etc/yum.repos.d && \
+            curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/fedora43/x86_64/cuda-fedora43.repo \
+                -o /etc/yum.repos.d/cuda-fedora43.repo 2>/dev/null || \
+                echo "Warning: Could not download CUDA repo configuration from NVIDIA"; \
+            dnf -y --setopt=install_weak_deps=False install --best --skip-broken \
+                cuda-toolkit \
+                2>/dev/null || \
+                echo "Note: CUDA Toolkit packages not available; can be installed post-boot via: dnf install -y cuda-toolkit"; \
+        fi; \
+        dnf -y clean all && rm -rf /var/cache/dnf 2>/dev/null || true; \
+        if [ -d /usr/local/cuda/bin ]; then \
+            printf 'export PATH="/usr/local/cuda/bin${PATH:+:${PATH}}"\n' \
+                > /etc/profile.d/cuda-toolkit.sh && \
+            chmod 644 /etc/profile.d/cuda-toolkit.sh && \
+            echo "CUDA bin path added to /etc/profile.d/cuda-toolkit.sh"; \
+        fi; \
+        echo "CUDA Toolkit install step completed"; \
+    else \
+        echo "CUDA Toolkit excluded (use --build-arg EXCLUDE_CUDA_TOOLKIT=no to include)"; \
+    fi
+
+# Install VS Code (offline preferred, online fallback — either path must succeed)
+RUN --mount=type=bind,source=offline-repo/vscode,target=/tmp/offline/vscode,relabel=shared,readonly \
+    if [ -n "$(find /tmp/offline/vscode/ -maxdepth 1 -type f -name '*.rpm' 2>/dev/null)" ]; then \
+        echo "Installing VS Code from offline repo..."; \
+        find /tmp/offline/vscode/ -maxdepth 1 -type f -name 'code-*.rpm' -exec dnf -y install {} \; ; \
+    else \
+        echo "Offline VS Code package not found, installing from Microsoft repo..."; \
+        rpm --import https://packages.microsoft.com/keys/microsoft.asc && \
+        sh -c 'echo -e "[code]\nname=Visual Studio Code\nbaseurl=https://packages.microsoft.com/yumrepos/vscode\nenabled=1\ngpgcheck=1\ngpgkey=https://packages.microsoft.com/keys/microsoft.asc" > /etc/yum.repos.d/vscode.repo' && \
+        dnf -y install code; \
+    fi && \
+    command -v code >/dev/null 2>&1 || { echo "ERROR: VS Code was not installed — place an RPM in offline-repo/vscode/ or ensure network access during build"; exit 1; } && \
+    dnf -y clean all && rm -rf /var/cache/dnf
+
+# Install WineHQ (offline preferred, online fallback)
+RUN --mount=type=bind,source=offline-repo/winehq,target=/tmp/offline/winehq,relabel=shared,readonly \
+    if [ -n "$(find /tmp/offline/winehq -maxdepth 1 -type f -name '*.rpm' ! -name '*.src.rpm' 2>/dev/null)" ]; then \
+        echo "Installing WineHQ from offline repo..."; \
+        find /tmp/offline/winehq -maxdepth 1 -type f -name '*.src.rpm' -print | sed 's/^/  Skipping source RPM: /' || true; \
+        find /tmp/offline/winehq -maxdepth 1 -type f -name '*.rpm' ! -name '*.src.rpm' -print0 | xargs -0r dnf -y install || true; \
+    else \
+        echo "Offline WineHQ packages not found, attempting online install..."; \
+        dnf -y install dnf-plugins-core || true; \
+        dnf config-manager --add-repo https://dl.winehq.org/wine-builds/fedora/$(rpm -E %fedora)/winehq.repo || true; \
+        dnf -y install winehq-stable || true; \
+    fi && \
+    dnf -y clean all && rm -rf /var/cache/dnf
+
+# Install Lutris separately using Fedora online repositories
+RUN echo "Installing Lutris from Fedora repositories..." && \
+    dnf -y --setopt=install_weak_deps=False install lutris || true && \
+    dnf -y clean all && rm -rf /var/cache/dnf
+
+# Install Lutris Runners (Dw Proton, DXVK, VKD3D-Proton, Proton-GE) from offline repo
+RUN --mount=type=bind,source=offline-repo/lutris-runners,target=/tmp/offline/lutris-runners,relabel=shared,readonly \
+    echo "Setting up Lutris runners (Dw Proton, DXVK, VKD3D-Proton, Proton-GE)..." && \
+    mkdir -p /opt/lutris-runners && \
+    RUNNERS_DIR="/opt/lutris-runners" && \
+    if [ -n "$(find /tmp/offline/lutris-runners -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.zip' \) 2>/dev/null)" ]; then \
+        echo "  Installing runners from offline repo..."; \
+        for runner_file in /tmp/offline/lutris-runners/*.tar.gz; do \
+            if [ -f "$runner_file" ]; then \
+                runner_name=$(basename "$runner_file" .tar.gz); \
+                echo "    Extracting: $runner_name"; \
+                tar -xzf "$runner_file" -C "$RUNNERS_DIR" 2>/dev/null || true; \
+            fi; \
+        done; \
+        for runner_file in /tmp/offline/lutris-runners/*.zip; do \
+            if [ -f "$runner_file" ]; then \
+                runner_name=$(basename "$runner_file" .zip); \
+                echo "    Extracting: $runner_name"; \
+                command -v unzip >/dev/null 2>&1 && unzip -q "$runner_file" -d "$RUNNERS_DIR" 2>/dev/null || true; \
+            fi; \
+        done; \
+    else \
+        echo "  Offline Lutris runners not found. Install them post-boot using Lutris GUI or:"; \
+        echo "    lutris --runner=dw-proton --runner=dxvk --runner=vkd3d-proton"; \
+    fi && \
+    dnf -y clean all && rm -rf /var/cache/dnf
+
+# Install helper script for managing Lutris runners
+RUN mkdir -p /usr/local/bin/bootc && \
+    printf '%s\n' \
+        '#!/usr/bin/env bash' \
+        '# Helper script to set up Lutris runners from offline artifacts' \
+        'set -euo pipefail' \
+        '' \
+        'RUNNERS_DIR="/opt/lutris-runners"' \
+        'LUTRIS_RUNNERS_DIR="${HOME}/.local/share/lutris/runners"' \
+        '' \
+        'if [ ! -d "$RUNNERS_DIR" ]; then' \
+        '    echo "No offline Lutris runners found at $RUNNERS_DIR"' \
+        '    echo "Use Lutris GUI to download runners, or run: lutris --runner=<name>"' \
+        '    exit 0' \
+        'fi' \
+        '' \
+        'mkdir -p "$LUTRIS_RUNNERS_DIR"' \
+        '' \
+        'echo "Linking Lutris runners from $RUNNERS_DIR..."' \
+        'for runner in "$RUNNERS_DIR"/*; do' \
+        '    if [ -d "$runner" ]; then' \
+        '        runner_name=$(basename "$runner")' \
+        '        target="$LUTRIS_RUNNERS_DIR/$runner_name"' \
+        '        if [ ! -e "$target" ]; then' \
+        '            ln -s "$runner" "$target"' \
+        '            echo "  Linked: $runner_name"' \
+        '        fi' \
+        '    fi' \
+        'done' \
+        '' \
+        'echo "Lutris runners setup complete."' \
+        > /usr/local/bin/bootc/setup-lutris-runners.sh && \
+    chmod 0755 /usr/local/bin/bootc/setup-lutris-runners.sh
+
+# Install Docker Desktop - OPTIONAL (404MB offline package)
+# To exclude, use: podman build --build-arg EXCLUDE_DOCKER_DESKTOP=yes
+RUN --mount=type=bind,source=offline-repo/docker-desktop,target=/tmp/offline/docker-desktop,relabel=shared,readonly \
+    if [ "$EXCLUDE_DOCKER_DESKTOP" != "yes" ]; then \
+        DOCKER_COPY_DIR="/tmp/offline/docker-desktop" && \
+        echo "Installing Docker Desktop (OPTIONAL package)..."; \
+        if [ -n "$(ls -A $DOCKER_COPY_DIR/*.rpm 2>/dev/null)" ]; then \
+            echo "  Installing Docker Desktop from offline repo..."; \
+            dnf -y install dnf-plugins-core || true; \
+            (curl -fsSL https://download.docker.com/linux/fedora/docker-ce.repo -o /etc/yum.repos.d/docker-ce.repo && \
+             dnf -y install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin || true) || true; \
+            dnf -y install $DOCKER_COPY_DIR/*.rpm || true; \
+        else \
+            echo "  Offline Docker Desktop package not found, attempting online install..."; \
+            dnf -y install dnf-plugins-core || true; \
+            curl -fsSL https://download.docker.com/linux/fedora/docker-ce.repo -o /etc/yum.repos.d/docker-ce.repo || true; \
+            dnf -y install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin || true; \
+            curl -fsSL "https://desktop.docker.com/linux/main/amd64/docker-desktop-x86_64.rpm" -o /tmp/docker-desktop.rpm || true; \
+            dnf -y install /tmp/docker-desktop.rpm || true; \
+            rm -f /tmp/docker-desktop.rpm; \
+        fi && \
+        rm -f /etc/yum.repos.d/docker-ce.repo && \
+        dnf -y clean all && rm -rf /var/cache/dnf; \
+    else \
+        echo "Docker Desktop skipped (set --build-arg EXCLUDE_DOCKER_DESKTOP=yes to exclude)"; \
+    fi
+
+# Install GIMP and Krita - OPTIONAL (350MB + 161MB for offline packages)
+# To exclude, use: podman build --build-arg EXCLUDE_GIMP_KRITA=yes
+RUN --mount=type=bind,source=offline-repo/gimp,target=/tmp/offline/gimp,relabel=shared,readonly \
+    --mount=type=bind,source=offline-repo/krita,target=/tmp/offline/krita,relabel=shared,readonly \
+    if [ "$EXCLUDE_GIMP_KRITA" != "yes" ]; then \
+        echo "Installing GIMP and Krita (OPTIONAL packages)..."; \
+        install_local_or_fedora() { \
+            local label="$1"; \
+            local repo_dir="$2"; \
+            local package_name="$3"; \
+            if compgen -G "${repo_dir}/*.rpm" >/dev/null; then \
+                echo "  Installing ${label} from offline repo..."; \
+                dnf -y install "${repo_dir}"/*.rpm || { \
+                    echo "  Warning: offline ${label} install failed, falling back to Fedora repos"; \
+                    dnf -y --setopt=install_weak_deps=False install "${package_name}" || true; \
+                }; \
+            else \
+                echo "  Offline ${label} packages not found, installing from Fedora repos..."; \
+                dnf -y --setopt=install_weak_deps=False install "${package_name}" || true; \
+            fi; \
+        }; \
+        install_local_or_fedora "GIMP" "/tmp/offline/gimp" "gimp" && \
+        install_local_or_fedora "Krita" "/tmp/offline/krita" "krita" && \
+        dnf -y clean all && rm -rf /var/cache/dnf; \
+    else \
+        echo "GIMP and Krita skipped (set --build-arg EXCLUDE_GIMP_KRITA=yes to exclude)"; \
+    fi
+
+# Install draw.io (offline preferred, online fallback)
+RUN --mount=type=bind,source=offline-repo/drawio,target=/tmp/offline/drawio,relabel=shared,readonly \
+    if [ -n "$(ls -A /tmp/offline/drawio/*.rpm 2>/dev/null)" ]; then \
+        echo "Installing draw.io from offline repo..."; \
+        dnf -y install /tmp/offline/drawio/*.rpm || true; \
+    else \
+        echo "Offline draw.io package not found, skipping (not in Fedora repos)..."; \
+    fi && \
+    dnf -y clean all && rm -rf /var/cache/dnf
+
+# Copy VS Code extensions
+RUN mkdir -p /opt/vscode-extensions
+COPY offline-repo/vscode-extensions/*.vsix /opt/vscode-extensions/
+# Extensions will be installed per-user via bootc-post-install.sh
+
+# Post-install scripts folder removed; using consolidated script only
+
+# Include image README inside the system image (alongside helper scripts)
+COPY BOOTC-README.md /usr/local/bin/bootc/BOOTC-README.md
+
+# Create JavaScript frameworks installer
+# Prefer pre-cached npm tarballs (if provided by offline repo)
+COPY offline-repo/npm-packages/ /opt/npm-packages/
+
+# Create offline npm cache and install JS frameworks from cache
+RUN mkdir -p /opt/npm-packages && \
+    set -eux; \
+    # If we already have cached tarballs (from offline-repo), prefer them and skip network operations
+    if ls /opt/npm-packages/*.tgz >/dev/null 2>&1; then \
+        echo "Using cached npm tarballs in /opt/npm-packages"; \
+    else \
+        echo "No cached npm tarballs found; attempting to fetch and pack (requires network)"; \
+        # Avoid writing to /root during build (some build environments make /root non-writable or non-dir)
+        export HOME=/tmp && mkdir -p /tmp/.npm && npm config set cache /tmp/.npm --global || true; \
+        for pkg in create-react-app @vue/cli @angular/cli create-next-app vite webpack webpack-cli typescript ts-node jest mocha eslint prettier pnpm; do \
+            echo "Packing $pkg"; \
+            npm pack "$pkg" --pack-destination /opt/npm-packages || echo "Warning: npm pack failed for $pkg"; \
+        done; \
+    fi; \
+    if ls /opt/npm-packages/*.tgz >/dev/null 2>&1; then \
+        echo "Installing JS frameworks from offline cache..."; \
+        # Ensure npm uses /tmp (some build envs make /root a file or non-writable) and set cache to /tmp/.npm
+        export HOME=/tmp && mkdir -p /tmp/.npm && npm config set cache /tmp/.npm --global || true; \
+        npm install -g --cache /tmp/.npm /opt/npm-packages/*.tgz || echo "Warning: npm install -g from cache failed"; \
+    else \
+        echo "No npm packages were cached; skipping global install"; \
+    fi
+
+# Create JavaScript frameworks verifier (checks cache and installed binaries)
+RUN cat > /usr/local/bin/bootc/install-js-frameworks.sh <<'EOF'
+#!/bin/bash
+set -euo pipefail
+
+CACHE="/opt/npm-packages"
+PKGS=(create-react-app @vue/cli @angular/cli create-next-app vite webpack webpack-cli typescript ts-node jest mocha eslint prettier pnpm)
+declare -A BINMAP
+BINMAP=( ["@vue/cli"]="vue" ["@angular/cli"]="ng" ["webpack-cli"]="webpack" ["typescript"]="tsc" )
+
+if [ ! -d "$CACHE" ]; then
+    echo "No offline npm cache found at $CACHE"
+    exit 1
+fi
+
+missing=0
+for pkg in "${PKGS[@]}"; do
+    # default binary name is basename(package)
+    bin="${BINMAP[$pkg]:-$(basename "$pkg") }"
+    if command -v "$bin" >/dev/null 2>&1; then
+        echo "OK: $bin"
+    else
+        echo "MISSING: $bin"
+        missing=1
+    fi
+done
+
+if [ $missing -eq 0 ]; then
+    echo "All JS tools present"
+    exit 0
+fi
+
+echo "To install missing tools from the offline cache run:"
+echo "  sudo npm install -g /opt/npm-packages/*.tgz"
+exit 2
+EOF
+RUN chmod +x /usr/local/bin/bootc/install-js-frameworks.sh
+
+# Create automount script for separate hard drive
+RUN cat > /usr/local/bin/bootc/automount-drive.sh <<'EOF'
+#!/bin/bash
+set -euo pipefail
+
+DEVICE="${1:-/dev/sda1}"
+MOUNT_POINT="${2:-.mountpoint}"
+
+usage() {
+cat <<'USAGE'
+Usage: automount-drive.sh [device] [mount_point]
+  device       - Block device to mount (default: /dev/sda1)
+  mount_point  - Relative mount point in user home (default: .mountpoint)
+
+This script attempts to mount a separate hard drive and make it accessible to the current user.
+Example: automount-drive.sh /dev/sda1 /mnt/data
+
+USAGE
+}
+
+if [[ "$DEVICE" == "-h" ]] || [[ "$DEVICE" == "--help" ]]; then
+    usage
+    exit 0
+fi
+
+if [ ! -e "$DEVICE" ]; then
+    echo "Error: Device $DEVICE not found"
+    exit 1
+fi
+
+# Determine mount point (absolute or relative to home)
+if [[ "$MOUNT_POINT" == /* ]]; then
+    TARGET_MOUNT="$MOUNT_POINT"
+else
+    TARGET_MOUNT="$HOME/$MOUNT_POINT"
+fi
+
+echo "Attempting to mount $DEVICE to $TARGET_MOUNT"
+
+# Check if device is already mounted
+if mountpoint -q "$TARGET_MOUNT" 2>/dev/null; then
+    echo "$DEVICE is already mounted at $TARGET_MOUNT"
+    exit 0
+fi
+
+# Create mount point if it doesn't exist
+if [ ! -d "$TARGET_MOUNT" ]; then
+    echo "Creating mount point: $TARGET_MOUNT"
+    mkdir -p "$TARGET_MOUNT"
+fi
+
+# Detect filesystem and mount with appropriate options
+echo "Detecting filesystem on $DEVICE..."
+FSTYPE=$(sudo blkid -o value -s TYPE "$DEVICE" 2>/dev/null || echo "auto")
+echo "Detected filesystem: $FSTYPE"
+
+# Mount with appropriate flags based on filesystem
+case "$FSTYPE" in
+    ntfs|exfat|vfat)
+        echo "Mounting with user-friendly options for $FSTYPE"
+        sudo mount -t "$FSTYPE" -o umask=0022,dmask=0022,fmask=0133,uid=$(id -u),gid=$(id -g) "$DEVICE" "$TARGET_MOUNT"
+        ;;
+    *)
+        echo "Mounting with default options"
+        sudo mount -t "$FSTYPE" "$DEVICE" "$TARGET_MOUNT"
+        # Try to make writable for current user if not already
+        sudo chown "$(id -u):$(id -g)" "$TARGET_MOUNT" 2>/dev/null || true
+        ;;
+esac
+
+echo "✓ Successfully mounted $DEVICE to $TARGET_MOUNT"
+echo "To unmount later, run: sudo umount $TARGET_MOUNT"
+EOF
+RUN chmod +x /usr/local/bin/bootc/automount-drive.sh
+
+# Install OpenShift/Kubernetes CLI tools from pre-downloaded cache
+RUN --mount=type=bind,source=offline-repo/openshift,target=/tmp/offline/openshift,relabel=shared,readonly \
+    OPENSHIFT_DIR="/tmp/offline/openshift" && \
+    INSTALL_DIR="/usr/local/bin/bootc" && \
+    echo "Installing OpenShift/Kubernetes tools from cache..." && \
+    if [ -f "$OPENSHIFT_DIR/oc" ]; then \
+        install -m 0755 "$OPENSHIFT_DIR/oc" "$INSTALL_DIR/oc" && \
+        echo "✓ oc installed from cache" && \
+        oc version --client 2>/dev/null || true; \
+    else \
+        echo "⚠ oc binary not found in $OPENSHIFT_DIR (optional)"; \
+    fi && \
+    if [ -f "$OPENSHIFT_DIR/kubectl" ]; then \
+        install -m 0755 "$OPENSHIFT_DIR/kubectl" "$INSTALL_DIR/kubectl" && \
+        echo "✓ kubectl installed from cache" && \
+        kubectl version --client 2>/dev/null || true; \
+    else \
+        echo "⚠ kubectl binary not found in $OPENSHIFT_DIR (optional)"; \
+    fi && \
+    echo "OpenShift/Kubernetes CLI tools installation complete"
+
+# Create symlinks for oc and kubectl to make them available in system PATH
+RUN INSTALL_DIR="/usr/local/bin/bootc" && \
+    if [ -f "$INSTALL_DIR/oc" ]; then \
+        ln -sf "$INSTALL_DIR/oc" /usr/local/bin/oc && \
+        echo "✓ Symlinked oc to /usr/local/bin/oc"; \
+    fi && \
+    if [ -f "$INSTALL_DIR/kubectl" ]; then \
+        ln -sf "$INSTALL_DIR/kubectl" /usr/local/bin/kubectl && \
+        ln -sf "$INSTALL_DIR/kubectl" /usr/local/bin/k && \
+        echo "✓ Symlinked kubectl to /usr/local/bin/kubectl and /usr/local/bin/k"; \
+    fi
+
+# Install helm from offline cache (if available)
+RUN --mount=type=bind,source=offline-repo/helm,target=/tmp/offline/helm,relabel=shared,readonly \
+    if [ -f "/tmp/offline/helm/helm" ]; then \
+        echo "Installing helm from offline cache..."; \
+        install -m 0755 /tmp/offline/helm/helm /usr/local/bin/helm && \
+        echo "✓ helm installed from cache: $(helm version 2>/dev/null | head -1 || echo 'version check skipped')"; \
+    else \
+        echo "⚠ helm binary not found in offline-repo/helm/"; \
+        echo "  Run fetch_helm.sh to download: ./bootc_ostree/fedora/image/scripts/fetch_helm.sh"; \
+    fi
+
+# Stage k3s binary and air-gap images for offline installs
+RUN --mount=type=bind,source=offline-repo/k3s,target=/tmp/offline/k3s,relabel=shared,readonly \
+    INSTALL_DIR="/usr/local/bin" && \
+    if [ -f "/tmp/offline/k3s/k3s" ]; then \
+        echo "Installing k3s binary from offline cache..."; \
+        install -m 0755 /tmp/offline/k3s/k3s "$INSTALL_DIR/k3s" && \
+        echo "✓ k3s installed: $($INSTALL_DIR/k3s --version 2>/dev/null | head -1 || echo 'version check skipped')"; \
+    else \
+        echo "⚠ k3s binary not found in offline-repo/k3s/"; \
+        echo "  Run fetch_k3s_binary.sh to download: ./bootc_ostree/fedora/image/scripts/fetch_k3s_binary.sh"; \
+    fi && \
+    if [ -n "$(ls -A /tmp/offline/k3s/k3s-airgap-images-*.tar.zst 2>/dev/null)" ]; then \
+        echo "Staging k3s air-gap images to /usr/share/k3s..."; \
+        mkdir -p /usr/share/k3s; \
+        cp /tmp/offline/k3s/k3s-airgap-images-*.tar.zst /usr/share/k3s/; \
+        if [ -n "$(ls -A /tmp/offline/k3s/sha256sum-*.txt 2>/dev/null)" ]; then \
+            cp /tmp/offline/k3s/sha256sum-*.txt /usr/share/k3s/; \
+        fi; \
+        chmod 644 /usr/share/k3s/k3s-airgap-images-*.tar.zst; \
+        chmod 644 /usr/share/k3s/sha256sum-*.txt 2>/dev/null || true; \
+        echo "✓ k3s air-gap artifacts staged"; \
+        echo "  Copy into place at runtime: /var/lib/rancher/k3s/agent/images/"; \
+    else \
+        echo "⚠ No k3s air-gap artifacts found in offline-repo/k3s/"; \
+        echo "  Run fetch_k3s_images.sh to download: ./bootc_ostree/fedora/image/scripts/fetch_k3s_images.sh"; \
+    fi
+
+# Configure k3s for air-gapped operation.
+# - write-kubeconfig-mode 0644 so regular users can read k3s.yaml without sudo
+# - flannel-backend vxlan is explicit and works fully offline (no external IPAM)
+# - node-name pins the hostname so cluster certificates stay valid after reboots
+RUN mkdir -p /etc/rancher/k3s && \
+    cat > /etc/rancher/k3s/config.yaml <<'K3SCFGEOF'
+# Kubeconfig is owner-readable only (0600). The k3s-kubeconfig-distribute.service
+# copies it per-user at runtime with chmod 600, so no world-readable admin token.
+write-kubeconfig-mode: "0600"
+# Explicit flannel backend — vxlan works in fully air-gapped environments
+flannel-backend: "vxlan"
+# SELinux enforcement left at the k3s default (enabled). Install k3s-selinux
+# policy package if container workloads require SELinux policy adjustments.
+K3SCFGEOF
+# Pre-create the config drop-in directory so ExecStartPre can write to it
+# without needing to create directories on a potentially read-only /etc.
+RUN mkdir -p /etc/rancher/k3s/config.yaml.d
+
+# Ensure kernel modules required by k3s / flannel are loaded at boot.
+# systemd-modules-load.service reads /etc/modules-load.d/ before k3s starts.
+RUN mkdir -p /etc/modules-load.d && \
+    printf 'overlay\nbr_netfilter\ndummy\n' > /etc/modules-load.d/k3s.conf
+
+# Make plain `kubectl` and `oc` work out of the box.
+# If the user already has ~/.kube/config (written by k3s-kubeconfig-distribute.service),
+# that takes precedence. Otherwise fall back to the per-user 0600 copy once it exists,
+# or the root-owned 0600 source for root itself.
+# KUBECONFIG fallback for LOGIN shells (bash, zsh, sh via /etc/profile.d)
+RUN printf '# k3s kubeconfig fallback — lets plain kubectl reach the k3s server.\n' \
+          '# /etc/rancher/k3s/k3s.yaml is root-readable only (write-kubeconfig-mode: 0600).\n' \
+          '# The k3s-kubeconfig-distribute.service copies it to ~/.kube/config (chmod 600)\n' \
+          '# for each local user when k3s.service activates.\n' \
+          'if [ -z "${KUBECONFIG:-}" ] && [ ! -f "${HOME}/.kube/config" ]; then\n' \
+          '    export KUBECONFIG=/etc/rancher/k3s/k3s.yaml\n' \
+          'fi\n' \
+    > /etc/profile.d/k3s-kubectl.sh && \
+    chmod 644 /etc/profile.d/k3s-kubectl.sh
+
+# KUBECONFIG fallback for NON-LOGIN interactive shells (desktop terminal apps, tmux, etc.).
+# Fedora sources /etc/bashrc.d/*.sh from /etc/bashrc for every bash session.
+RUN mkdir -p /etc/bashrc.d && \
+    printf '# k3s kubeconfig fallback for interactive non-login shells\n' \
+           'if [ -z "${KUBECONFIG:-}" ] && [ ! -f "${HOME}/.kube/config" ]; then\n' \
+           '    export KUBECONFIG=/etc/rancher/k3s/k3s.yaml\n' \
+           'fi\n' \
+    > /etc/bashrc.d/k3s-kubectl.sh && \
+    chmod 644 /etc/bashrc.d/k3s-kubectl.sh
+
+    # Just load the image separately at runtime instead of copying into the image, since it can be very large and we want to avoid bloating the image if not needed. Provide instructions for users to load it manually from the shared location.
+# Copy Triton Server container image (if present) to user share location
+# Users can load it with: podman load -i ~/.local/share/triton/tritonserver-*.tar
+# COPY offline-repo/triton/ /tmp/triton/
+# RUN if [ -n "$(ls -A /tmp/triton/*.tar 2>/dev/null)" ]; then \
+#         echo "Copying Triton Server container image to shared location..."; \
+#         mkdir -p /usr/share/triton; \
+#         cp /tmp/triton/*.tar /usr/share/triton/; \
+#         chmod 644 /usr/share/triton/*.tar; \
+#         echo "✓ Triton Server image copied to /usr/share/triton/"; \
+#         echo "  Load with: podman load -i /usr/share/triton/tritonserver-*.tar"; \
+#     fi && \
+#     rm -rf /tmp/triton
+
+# Create consolidated post-install script
+RUN cat > /usr/local/bin/bootc/bootc-post-install.sh <<'EOF'
+#!/bin/bash
+set -euo pipefail
+
+README_SRC="/usr/local/bin/bootc/BOOTC-README.md"
+
+usage() {
+cat <<'USAGE'
+Usage: bootc-post-install.sh [options] [user...]
+    --bootc-user NAME      Username to create for the bootc user step
+    --bootc-password PASS  Password to set for the bootc user step
+  --skip-extensions     Skip VS Code extensions
+  --skip-readme         Skip copying README to user desktops
+    --skip-services       Skip enabling GUI services (display manager/xrdp/graphical target)
+  --skip-nvidia         Skip NVIDIA driver verification
+    --run-nvidia-diagnostics  Run NVIDIA hybrid diagnostics report
+  --skip-docker         Skip adding users to docker group
+  --skip-podman         Skip podman user socket enable
+    --skip-create-user    Skip creating the configured bootc user
+    --only-steps LIST     Run only selected steps (comma-separated). Choices: create-user,extensions,readme,services,nvidia,nvidia-diagnostics,docker,podman
+  -h, --help            Show this help
+
+Users (optional): if provided, VS Code extensions install only for those users. Defaults to all local users.
+USAGE
+}
+
+if [[ $EUID -ne 0 ]]; then
+    echo "Error: This script must be run as root (use: sudo /usr/local/bin/bootc/bootc-post-install.sh)"
+    exit 1
+fi
+
+RUN_BASE=1
+RUN_EXT=1
+RUN_README=1
+RUN_SERVICES=1
+RUN_NVIDIA_STEP=1
+RUN_NVIDIA_DIAG=0
+RUN_DOCKER_GROUP=1
+RUN_PODMAN=1
+RUN_CREATE_USER=1
+ONLY_MODE=0
+BOOTC_CREATE_USER_NAME=""
+BOOTC_CREATE_USER_PASSWORD=""
+
+disable_all_base_steps() {
+    RUN_EXT=0
+    RUN_README=0
+    RUN_SERVICES=0
+    RUN_NVIDIA_STEP=0
+    RUN_NVIDIA_DIAG=0
+    RUN_DOCKER_GROUP=0
+    RUN_PODMAN=0
+    RUN_CREATE_USER=0
+}
+
+normalize_step() {
+    local raw="${1,,}"
+    raw="${raw//-/_}"
+    case "$raw" in
+        create_user|createuser|create_bootcuser) echo "create_user" ;;
+        extension|extensions) echo "extensions" ;;
+        readme|desktop_readme|readme_desktop) echo "readme" ;;
+        service|services) echo "services" ;;
+        nvidia|gpu) echo "nvidia" ;;
+        nvidia_diagnostics|nvidia_diagnostic|diagnostics|diagnostic|diag) echo "nvidia_diagnostics" ;;
+        docker|docker_group) echo "docker" ;;
+        podman|podman_socket) echo "podman" ;;
+        *) echo "" ;;
+    esac
+}
+
+select_only_steps() {
+    local list="$1"
+    [[ $ONLY_MODE -eq 0 ]] && disable_all_base_steps
+    ONLY_MODE=1
+
+    IFS=',' read -ra parts <<< "$list"
+    for raw in "${parts[@]}"; do
+        local step
+        step=$(normalize_step "$raw")
+        case "$step" in
+            create_user) RUN_CREATE_USER=1 ;;
+            extensions) RUN_EXT=1 ;;
+            readme) RUN_README=1 ;;
+            services) RUN_SERVICES=1 ;;
+            nvidia) RUN_NVIDIA_STEP=1 ;;
+            nvidia_diagnostics) RUN_NVIDIA_DIAG=1 ;;
+            docker) RUN_DOCKER_GROUP=1 ;;
+            podman) RUN_PODMAN=1 ;;
+            "") echo "Unknown step: $raw (use: create-user, extensions, readme, services, nvidia, nvidia-diagnostics, docker, podman)" ;;
+        esac
+    done
+}
+
+declare -a USER_ARGS=()
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --bootc-user)
+            [ $# -ge 2 ] || { echo "Missing value for $1"; exit 1; }
+            BOOTC_CREATE_USER_NAME="$2"; shift 2 ;;
+        --bootc-user=*)
+            BOOTC_CREATE_USER_NAME="${1#*=}"; shift ;;
+        --bootc-password)
+            [ $# -ge 2 ] || { echo "Missing value for $1"; exit 1; }
+            echo "WARNING: --bootc-password passes credentials via command-line arguments," >&2
+            echo "         which are visible in 'ps aux' and /proc/<pid>/cmdline." >&2
+            echo "         Prefer --bootc-password-file /path/to/file for non-interactive use." >&2
+            BOOTC_CREATE_USER_PASSWORD="$2"; shift 2 ;;
+        --bootc-password=*)
+            echo "WARNING: --bootc-password passes credentials via command-line arguments," >&2
+            echo "         which are visible in 'ps aux' and /proc/<pid>/cmdline." >&2
+            echo "         Prefer --bootc-password-file /path/to/file for non-interactive use." >&2
+            BOOTC_CREATE_USER_PASSWORD="${1#*=}"; shift ;;
+        --bootc-password-file)
+            [ $# -ge 2 ] || { echo "Missing value for $1"; exit 1; }
+            [ -r "$2" ] || { echo "Error: cannot read password file '$2'"; exit 1; }
+            BOOTC_CREATE_USER_PASSWORD=$(cat "$2"); shift 2 ;;
+        --bootc-password-file=*)
+            _pwfile="${1#*=}"
+            [ -r "$_pwfile" ] || { echo "Error: cannot read password file '$_pwfile'"; exit 1; }
+            BOOTC_CREATE_USER_PASSWORD=$(cat "$_pwfile"); shift ;;
+        --skip-extensions|--no-extensions)
+            RUN_EXT=0; shift ;;
+        --skip-readme|--no-readme)
+            RUN_README=0; shift ;;
+        --skip-services|--no-services)
+            RUN_SERVICES=0; shift ;;
+        --skip-nvidia|--no-nvidia)
+            RUN_NVIDIA_STEP=0; shift ;;
+        --run-nvidia-diagnostics|--nvidia-diagnostics)
+            RUN_NVIDIA_DIAG=1; shift ;;
+        --skip-docker|--no-docker|--skip-docker-group)
+            RUN_DOCKER_GROUP=0; shift ;;
+        --skip-podman|--no-podman)
+            RUN_PODMAN=0; shift ;;
+        --skip-create-user|--no-create-user)
+            RUN_CREATE_USER=0; shift ;;
+        --only-steps)
+            [ $# -ge 2 ] || { echo "Missing value for $1"; exit 1; }
+            select_only_steps "$2"; shift 2 ;;
+        --only-steps=*)
+            select_only_steps "${1#*=}"; shift ;;
+        -h|--help)
+            usage; exit 0 ;;
+        *)
+            USER_ARGS+=("$1"); shift ;;
+    esac
+done
+
+echo "BOOTC Post-Install: starting"
+step=1
+next_step() { echo "Step $step: $1"; step=$((step+1)); }
+
+valid_linux_username() {
+    [[ "$1" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]]
+}
+
+prompt_for_bootc_user_details() {
+    local password_confirm
+
+    if [[ -z "$BOOTC_CREATE_USER_NAME" ]]; then
+        if [[ -t 0 ]]; then
+            while true; do
+                read -r -p "Enter username for bootc user [BOOTCUser]: " BOOTC_CREATE_USER_NAME
+                BOOTC_CREATE_USER_NAME="${BOOTC_CREATE_USER_NAME:-BOOTCUser}"
+                if valid_linux_username "$BOOTC_CREATE_USER_NAME"; then
+                    break
+                fi
+                echo "  Invalid username '$BOOTC_CREATE_USER_NAME'. Use lowercase letters, digits, underscores, or dashes."
+            done
+        else
+            echo "Error: bootc user creation needs --bootc-user when stdin is not interactive"
+            exit 1
+        fi
+    elif ! valid_linux_username "$BOOTC_CREATE_USER_NAME"; then
+        echo "Error: invalid --bootc-user value '$BOOTC_CREATE_USER_NAME'"
+        exit 1
+    fi
+
+    if [[ -z "$BOOTC_CREATE_USER_PASSWORD" ]]; then
+        if [[ -t 0 ]]; then
+            while true; do
+                read -r -s -p "Enter password for $BOOTC_CREATE_USER_NAME: " BOOTC_CREATE_USER_PASSWORD
+                echo
+                read -r -s -p "Confirm password for $BOOTC_CREATE_USER_NAME: " password_confirm
+                echo
+
+                if [[ -z "$BOOTC_CREATE_USER_PASSWORD" ]]; then
+                    echo "  Password cannot be empty."
+                    continue
+                fi
+
+                if [[ "$BOOTC_CREATE_USER_PASSWORD" != "$password_confirm" ]]; then
+                    echo "  Passwords do not match."
+                    BOOTC_CREATE_USER_PASSWORD=""
+                    continue
+                fi
+
+                break
+            done
+        else
+            echo "Error: bootc user creation needs --bootc-password when stdin is not interactive"
+            exit 1
+        fi
+    fi
+}
+
+register_samba_user_with_password() {
+    local samba_user="$1"
+    local samba_password="$2"
+
+    if ! command -v smbpasswd >/dev/null 2>&1; then
+        return 0
+    fi
+
+    if command -v pdbedit >/dev/null 2>&1 && pdbedit -L -u "$samba_user" >/dev/null 2>&1; then
+        printf '%s\n%s\n' "$samba_password" "$samba_password" | \
+            smbpasswd -s "$samba_user" 2>/dev/null && \
+            echo "  Updated Samba password for $samba_user" || \
+            echo "  Warning: Samba password update failed; run 'sudo smbpasswd $samba_user' manually"
+    else
+        printf '%s\n%s\n' "$samba_password" "$samba_password" | \
+            smbpasswd -a -s "$samba_user" 2>/dev/null && \
+            echo "  Registered $samba_user in Samba database" || \
+            echo "  Warning: smbpasswd registration failed; run 'sudo smbpasswd -a $samba_user' manually"
+    fi
+}
+
+prompt_for_existing_samba_user_password() {
+    local samba_user="$1"
+    local samba_password=""
+    local password_confirm=""
+
+    while true; do
+        read -r -s -p "Enter Samba password for existing user $samba_user: " samba_password
+        echo >&2
+        read -r -s -p "Confirm Samba password for existing user $samba_user: " password_confirm
+        echo >&2
+
+        if [[ -z "$samba_password" ]]; then
+            echo "  Password cannot be empty." >&2
+            continue
+        fi
+
+        if [[ "$samba_password" != "$password_confirm" ]]; then
+            echo "  Passwords do not match." >&2
+            continue
+        fi
+
+        printf '%s' "$samba_password"
+        return 0
+    done
+}
+
+register_invoking_user_in_samba() {
+    local bootc_user="$1"
+    local admin_user="${SUDO_USER:-}"
+    local response
+    local samba_password
+
+    [ -n "$admin_user" ] || return 0
+    [ "$admin_user" != "root" ] || return 0
+    [ "$admin_user" != "$bootc_user" ] || return 0
+    getent passwd "$admin_user" >/dev/null 2>&1 || return 0
+
+    if command -v pdbedit >/dev/null 2>&1 && pdbedit -L -u "$admin_user" >/dev/null 2>&1; then
+        echo "  Samba account already present for $admin_user"
+        return 0
+    fi
+
+    if [[ -t 0 ]]; then
+        read -r -p "Register Samba access for existing user $admin_user as well? [Y/n]: " response
+        case "${response,,}" in
+            n|no)
+                echo "  Skipping Samba registration for $admin_user"
+                return 0
+                ;;
+        esac
+
+        samba_password=$(prompt_for_existing_samba_user_password "$admin_user")
+        register_samba_user_with_password "$admin_user" "$samba_password"
+    else
+        echo "  Note: existing user $admin_user is not registered in Samba; run 'sudo smbpasswd -a $admin_user' to enable network share login"
+    fi
+}
+
+create_bootcuser() {
+    local BOOTC_USER
+    local BOOTC_HOME
+
+    prompt_for_bootc_user_details
+    BOOTC_USER="$BOOTC_CREATE_USER_NAME"
+
+    if getent passwd "$BOOTC_USER" >/dev/null 2>&1; then
+        echo "  User $BOOTC_USER already exists, skipping creation"
+        register_invoking_user_in_samba "$BOOTC_USER"
+        return 0
+    fi
+
+    echo "  Creating user $BOOTC_USER..."
+    if useradd -m -s /bin/bash "$BOOTC_USER" 2>/dev/null; then
+        echo "  User $BOOTC_USER created successfully"
+
+        BOOTC_HOME=$(getent passwd "$BOOTC_USER" | awk -F: '{print $6}')
+        BOOTC_HOME="${BOOTC_HOME:-/var/home/$BOOTC_USER}"
+
+        # Relax home dir permissions so other authenticated users can traverse it via Samba
+        chmod 755 "$BOOTC_HOME" 2>/dev/null || true
+
+        printf '%s:%s\n' "$BOOTC_USER" "$BOOTC_CREATE_USER_PASSWORD" | chpasswd 2>/dev/null || true
+        echo "  Password set for $BOOTC_USER"
+
+        # Register the user in the Samba database so network drive access works
+        # with the same credentials as the Linux login password.
+        register_samba_user_with_password "$BOOTC_USER" "$BOOTC_CREATE_USER_PASSWORD"
+        register_invoking_user_in_samba "$BOOTC_USER"
+
+        # Add bootc user to docker group if docker group exists
+        if getent group docker >/dev/null 2>&1; then
+            usermod -aG docker "$BOOTC_USER" 2>/dev/null || true
+            echo "  Added $BOOTC_USER to docker group"
+        fi
+
+        # Copy README to the configured bootc user desktop
+        if [ -f "$README_SRC" ]; then
+            mkdir -p "$BOOTC_HOME/Desktop"
+            chown "$BOOTC_USER:$BOOTC_USER" "$BOOTC_HOME/Desktop"
+            cp "$README_SRC" "$BOOTC_HOME/Desktop/BOOTC-README.md"
+            chown "$BOOTC_USER:$BOOTC_USER" "$BOOTC_HOME/Desktop/BOOTC-README.md"
+            echo "  Copied README to $BOOTC_USER Desktop"
+        fi
+    else
+        echo "  Warning: failed to create user $BOOTC_USER"
+        return 1
+    fi
+}
+
+verify_time_sync() {
+    echo "Verifying system time synchronization..."
+    
+    # Check ntpdate-sync service status
+    local NTPDATE_STATUS
+    NTPDATE_STATUS=$(systemctl is-active ntpdate-sync.service 2>/dev/null || echo "unknown")
+    
+    # Check chronyd service status
+    local CHRONYD_STATUS
+    CHRONYD_STATUS=$(systemctl is-active chronyd.service 2>/dev/null || echo "unknown")
+    
+    echo "  ntpdate-sync.service: $NTPDATE_STATUS"
+    echo "  chronyd.service: $CHRONYD_STATUS"
+    
+    # Show last sync time from chrony
+    if command -v chronyc >/dev/null 2>&1; then
+        echo "  chronyc tracking:"
+        chronyc tracking 2>/dev/null | grep -E "System time|RMS offset|Reference" | sed 's/^/    /' || echo "    (chronyc info unavailable)"
+    fi
+    
+    # Warn if ntpdate-sync failed
+    if [ "$NTPDATE_STATUS" != "inactive" ] && [ "$NTPDATE_STATUS" != "active" ]; then
+        echo "  ⚠️  WARNING: ntpdate-sync.service status is '$NTPDATE_STATUS' — initial time sync may not have completed"
+        echo "      k3s certificate generation may use incorrect timestamps"
+        echo "      Try: sudo systemctl restart ntpdate-sync.service chronyd.service"
+        return 1
+    fi
+    
+    return 0
+}
+
+ensure_k3s_kubeconfig_for_user() {
+    local U="$1"
+    local HOME_DIR="$2"
+    local KUBE_DIR="$HOME_DIR/.kube"
+    local USER_KUBECONFIG="$KUBE_DIR/config"
+    local K3S_KUBECONFIG="/etc/rancher/k3s/k3s.yaml"
+
+    [ -n "$U" ] || return 0
+    [ -d "$HOME_DIR" ] || return 0
+
+    mkdir -p "$KUBE_DIR"
+    chown "$U:$U" "$KUBE_DIR"
+    chmod 700 "$KUBE_DIR"
+
+    if [ -f "$K3S_KUBECONFIG" ]; then
+        cp "$K3S_KUBECONFIG" "$USER_KUBECONFIG"
+        chown "$U:$U" "$USER_KUBECONFIG"
+        chmod 600 "$USER_KUBECONFIG"
+        echo "  k3s kubeconfig copied to $USER_KUBECONFIG"
+    else
+        # k3s may not have started yet; use a forward-looking symlink so plain kubectl works once it does.
+        ln -sfn "$K3S_KUBECONFIG" "$USER_KUBECONFIG"
+        chown -h "$U:$U" "$USER_KUBECONFIG" 2>/dev/null || true
+        echo "  k3s kubeconfig not present yet; linked $USER_KUBECONFIG -> $K3S_KUBECONFIG"
+    fi
+}
+
+install_extensions_for_user() {
+    local U="$1"
+    [ -n "$U" ] || return 0
+
+    local HOME_DIR
+    HOME_DIR=$(getent passwd "$U" | awk -F: '{print $6}')
+    [ -d "$HOME_DIR" ] || { echo "Home not found for $U"; return 0; }
+
+    if ! command -v code >/dev/null 2>&1; then
+        echo "VS Code not found; skipping for $U"
+        return 0
+    fi
+
+    echo "Installing VS Code extensions for user $U..."
+    mkdir -p "$HOME_DIR/.vscode/extensions"
+    chown -R "$U":"$U" "$HOME_DIR/.vscode"
+
+    for VSIX in /opt/vscode-extensions/*.vsix; do
+        [ -f "$VSIX" ] || continue
+        echo "  Installing $(basename "$VSIX")"
+        sudo -u "$U" HOME="$HOME_DIR" code --install-extension "$VSIX" --no-sandbox --force 2>/dev/null || echo "  Warning: extension install failed, continuing"
+    done
+}
+
+enable_podman_socket_for_user() {
+    local U="$1"
+    local USER_UID
+    USER_UID=$(id -u "$U" 2>/dev/null) || return 0
+
+    loginctl enable-linger "$U" >/dev/null 2>&1 || echo "  Note: could not enable linger for $U (requires systemd-logind)"
+
+    if [ ! -d "/run/user/$USER_UID" ]; then
+        mkdir -p "/run/user/$USER_UID"
+        chown "$USER_UID":"$USER_UID" "/run/user/$USER_UID"
+        chmod 700 "/run/user/$USER_UID"
+    fi
+
+    sudo -u "$U" XDG_RUNTIME_DIR="/run/user/$USER_UID" systemctl --user enable --now podman.socket 2>/dev/null || \
+        echo "  Note: Podman user socket setup failed for $U; run after login: systemctl --user enable --now podman.socket"
+}
+
+
+if (( RUN_BASE )); then
+    next_step "Creating bootc user..."
+    if (( RUN_CREATE_USER )); then
+        create_bootcuser
+    else
+        echo "  Skipping bootc user creation (disabled by flag)"
+    fi
+
+    next_step "Installing VS Code extensions..."
+    if (( RUN_EXT )); then
+        if [ ${#USER_ARGS[@]} -gt 0 ]; then
+            echo "  For specified users: ${USER_ARGS[*]}"
+            for U in "${USER_ARGS[@]}"; do
+                install_extensions_for_user "$U"
+            done
+        else
+            echo "  For all local users..."
+            mapfile -t USERS < <(getent passwd | awk -F: '$3 >= 1000 && $7 !~ /(nologin|false|sync|halt|shutdown)$/ && $6 ~ /^\// {print $1}')
+            echo "  Found ${#USERS[@]} users: ${USERS[*]}"
+            for U in "${USERS[@]}"; do
+                install_extensions_for_user "$U"
+            done
+        fi
+    else
+        echo "  Skipping VS Code extensions (disabled by flag)"
+    fi
+
+    next_step "Copying README to user desktops..."
+    if (( RUN_README )); then
+        if [ -f "$README_SRC" ]; then
+            mapfile -t USERS < <(getent passwd | awk -F: '$3 >= 1000 && $7 !~ /(nologin|false|sync|halt|shutdown)$/ && $6 ~ /^\// {print $1}')
+            echo "  Found ${#USERS[@]} users: ${USERS[*]}"
+            for U in "${USERS[@]}"; do
+                HOME_DIR=$(getent passwd "$U" | awk -F: '{print $6}')
+                [ -d "$HOME_DIR" ] || continue
+                mkdir -p "$HOME_DIR/Desktop"
+                chown "$U":"$U" "$HOME_DIR/Desktop"
+                cp "$README_SRC" "$HOME_DIR/Desktop/BOOTC-README.md"
+                chown "$U":"$U" "$HOME_DIR/Desktop/BOOTC-README.md"
+                echo "  Copied to $U Desktop"
+            done
+        else
+            echo "  README not found, skipping"
+        fi
+    else
+        echo "  Skipping README copy (disabled by flag)"
+    fi
+
+    next_step "Enabling GUI services..."
+    if (( RUN_SERVICES )); then
+        if systemctl list-unit-files | grep -q '^sddm\.service'; then
+            systemctl enable sddm 2>/dev/null || echo "  Warning: SDDM enable failed"
+        else
+            systemctl enable gdm 2>/dev/null || echo "  Warning: GDM enable failed"
+        fi
+        systemctl enable xrdp 2>/dev/null || echo "  Warning: XRDP enable failed"
+        if systemctl list-unit-files | grep -q '^bootc-fetch-apply-updates\.timer'; then
+            systemctl enable bootc-fetch-apply-updates.timer 2>/dev/null || echo "  Warning: bootc-fetch-apply-updates.timer enable failed"
+        fi
+        for UNIT in nvidia-suspend.service nvidia-hibernate.service nvidia-resume.service nvidia-powerd.service switcheroo-control.service; do
+            if systemctl list-unit-files | grep -q "^${UNIT}"; then
+                systemctl enable "$UNIT" 2>/dev/null || echo "  Warning: $UNIT enable failed"
+            fi
+        done
+        systemctl set-default graphical.target 2>/dev/null || echo "  Warning: graphical.target set failed"
+    else
+        echo "  Skipping GUI services enable (disabled by flag)"
+    fi
+
+    next_step "NVIDIA verification..."
+    if (( RUN_NVIDIA_STEP )); then
+        if command -v nvidia-smi >/dev/null 2>&1; then
+            echo "  NVIDIA drivers detected in system image"
+            echo "  Kernel modules were pre-built at image creation time"
+            echo "  Run 'nvidia-smi' after reboot to verify NVIDIA driver functionality"
+        else
+            echo "  NVIDIA not detected, skipping"
+        fi
+    else
+        echo "  Skipping NVIDIA verification (disabled by flag)"
+    fi
+
+    next_step "NVIDIA hybrid diagnostics..."
+    if (( RUN_NVIDIA_DIAG )); then
+        if [ -x /usr/local/bin/bootc/nvidia-hybrid-diagnostics.sh ]; then
+            /usr/local/bin/bootc/nvidia-hybrid-diagnostics.sh || true
+        else
+            echo "  Diagnostics script missing: /usr/local/bin/bootc/nvidia-hybrid-diagnostics.sh"
+        fi
+    else
+        echo "  Skipping NVIDIA diagnostics (enable with --run-nvidia-diagnostics)"
+    fi
+
+    next_step "Docker group setup..."
+    if (( RUN_DOCKER_GROUP )); then
+        getent group docker >/dev/null 2>&1 || groupadd -f docker || echo "  Warning: failed to create docker group"
+
+        if getent group docker >/dev/null 2>&1; then
+            mapfile -t USERS < <(getent passwd | awk -F: '$3 >= 1000 && $7 !~ /(nologin|false|sync|halt|shutdown)$/ && $6 ~ /^\// {print $1}')
+            echo "  Found ${#USERS[@]} users: ${USERS[*]}"
+            for U in "${USERS[@]}"; do
+                usermod -aG docker "$U" 2>/dev/null || true
+                echo "  Added $U to docker group"
+            done
+        else
+            echo "  Docker group not available, skipping"
+        fi
+    else
+        echo "  Skipping docker group additions (disabled by flag)"
+    fi
+
+    next_step "Podman setup..."
+    if (( RUN_PODMAN )); then
+        mapfile -t USERS < <(getent passwd | awk -F: '$3 >= 1000 && $7 !~ /(nologin|false|sync|halt|shutdown)$/ && $6 ~ /^\// {print $1}')
+        echo "  Enabling Podman user socket for: ${USERS[*]}"
+        for U in "${USERS[@]}"; do
+            enable_podman_socket_for_user "$U"
+        done
+    else
+        echo "  Skipping podman socket enable (disabled by flag)"
+    fi
+
+    next_step "Verifying system time synchronization..."
+    verify_time_sync
+
+    next_step "Preparing k3s kubeconfig for users..."
+    mapfile -t USERS < <(getent passwd | awk -F: '$3 >= 1000 && $7 !~ /(nologin|false|sync|halt|shutdown)$/ && $6 ~ /^\// {print $1}')
+    echo "  Found ${#USERS[@]} users: ${USERS[*]}"
+    for U in "${USERS[@]}"; do
+        HOME_DIR=$(getent passwd "$U" | awk -F: '{print $6}')
+        [ -d "$HOME_DIR" ] || continue
+        ensure_k3s_kubeconfig_for_user "$U" "$HOME_DIR"
+    done
+
+    next_step "Setting up Lutris runners..."
+    if [[ -d /opt/lutris-runners ]]; then
+        mapfile -t USERS < <(getent passwd | awk -F: '$3 >= 1000 && $7 !~ /(nologin|false|sync|halt|shutdown)$/ && $6 ~ /^\// {print $1}')
+        echo "  Found ${#USERS[@]} users: ${USERS[*]}"
+        for U in "${USERS[@]}"; do
+            HOME_DIR=$(getent passwd "$U" | awk -F: '{print $6}')
+            [ -d "$HOME_DIR" ] || continue
+            LUTRIS_RUNNERS_DIR="$HOME_DIR/.local/share/lutris/runners"
+            mkdir -p "$LUTRIS_RUNNERS_DIR"
+            
+            # Symlink runners from /opt/lutris-runners if not already present
+            for runner in /opt/lutris-runners/*; do
+                if [[ -d "$runner" ]]; then
+                    runner_name=$(basename "$runner")
+                    target="$LUTRIS_RUNNERS_DIR/$runner_name"
+                    if [[ ! -e "$target" ]]; then
+                        ln -s "$runner" "$target" 2>/dev/null || true
+                        echo "    Linked $runner_name for user $U"
+                    fi
+                fi
+            done
+            chown -R "$U:$U" "$HOME_DIR/.local" 2>/dev/null || true
+        done
+        echo "  Lutris runners setup complete"
+    else
+        echo "  No offline Lutris runners found at /opt/lutris-runners"
+        echo "  Users can download runners directly from Lutris GUI or run:"
+        echo "    lutris --runner=dw-proton --runner=dxvk --runner=vkd3d-proton"
+    fi
+
+else
+    echo "Error: all base steps disabled"
+    exit 1
+fi
+
+echo ""
+echo "BOOTC Post-Install: complete"
+echo "Note: Some services may require a reboot to take full effect"
+EOF
+RUN chmod +x /usr/local/bin/bootc/bootc-post-install.sh
+
+# NVIDIA hybrid diagnostics helper
+RUN cat > /usr/local/bin/bootc/nvidia-hybrid-diagnostics.sh <<'EOF'
+#!/bin/bash
+set -u
+
+STRICT=0
+if [[ "${1:-}" == "--strict" ]]; then
+    STRICT=1
+fi
+
+PASS=0
+WARN=0
+FAIL=0
+
+ok() { PASS=$((PASS+1)); echo "[PASS] $*"; }
+warn() { WARN=$((WARN+1)); echo "[WARN] $*"; }
+fail() { FAIL=$((FAIL+1)); echo "[FAIL] $*"; }
+
+check_rpm() {
+    local pkg="$1"
+    if rpm -q "$pkg" >/dev/null 2>&1; then
+        ok "Package installed: $pkg"
+    else
+        fail "Package missing: $pkg"
+    fi
+}
+
+check_service_state() {
+    local svc="$1"
+    if ! systemctl list-unit-files | grep -q "^${svc}"; then
+        warn "Service not present on this system: $svc"
+        return 0
+    fi
+
+    local enabled_state active_state
+    enabled_state="$(systemctl is-enabled "$svc" 2>/dev/null || true)"
+    active_state="$(systemctl is-active "$svc" 2>/dev/null || true)"
+
+    if [[ "$enabled_state" == "enabled" ]]; then
+        ok "Service enabled: $svc"
+    else
+        warn "Service not enabled: $svc ($enabled_state)"
+    fi
+
+    if [[ "$active_state" == "active" ]]; then
+        ok "Service active: $svc"
+    else
+        warn "Service not active: $svc ($active_state)"
+    fi
+}
+
+echo "== BOOTC NVIDIA Hybrid Diagnostics =="
+
+echo "-- Package checks --"
+for pkg in \
+    akmod-nvidia \
+    xorg-x11-drv-nvidia \
+    xorg-x11-drv-nvidia-cuda \
+    xorg-x11-drv-nvidia-power \
+    nvidia-persistenced \
+    switcheroo-control; do
+    check_rpm "$pkg"
+done
+
+echo "-- Module config checks --"
+if [[ -f /etc/modprobe.d/nvidia-pm.conf ]] && grep -q '^options nvidia_drm modeset=1' /etc/modprobe.d/nvidia-pm.conf; then
+    ok "nvidia_drm modeset=1 configured"
+else
+    fail "Missing nvidia_drm modeset=1 in /etc/modprobe.d/nvidia-pm.conf"
+fi
+
+if [[ -f /etc/modprobe.d/nvidia-pm.conf ]] && grep -q '^options nvidia_drm fbdev=1' /etc/modprobe.d/nvidia-pm.conf; then
+    ok "nvidia_drm fbdev=1 configured"
+else
+    fail "Missing nvidia_drm fbdev=1 in /etc/modprobe.d/nvidia-pm.conf"
+fi
+
+if lsmod | grep -q '^nouveau'; then
+    fail "nouveau kernel module is loaded"
+else
+    ok "nouveau kernel module is not loaded"
+fi
+
+if lsmod | grep -q '^nvidia'; then
+    ok "nvidia kernel module is loaded"
+else
+    fail "nvidia kernel module is not loaded"
+fi
+
+if lsmod | grep -q '^nvidia_drm'; then
+    ok "nvidia_drm kernel module is loaded"
+else
+    warn "nvidia_drm kernel module is not loaded"
+fi
+
+echo "-- Service checks --"
+for svc in \
+    switcheroo-control.service \
+    nvidia-powerd.service \
+    nvidia-persistenced.service \
+    nvidia-suspend.service \
+    nvidia-resume.service \
+    nvidia-hibernate.service; do
+    check_service_state "$svc"
+done
+
+echo "-- Runtime checks --"
+if command -v nvidia-smi >/dev/null 2>&1; then
+    if nvidia-smi >/tmp/nvidia-smi.out 2>/tmp/nvidia-smi.err; then
+        ok "nvidia-smi command succeeded"
+    else
+        fail "nvidia-smi failed; stderr: $(tail -n 1 /tmp/nvidia-smi.err 2>/dev/null || echo unknown)"
+    fi
+else
+    fail "nvidia-smi command not found"
+fi
+
+NVIDIA_PCI_RAW="$(lspci -Dnn 2>/dev/null | awk '/NVIDIA/{print $1; exit}')"
+if [[ -n "${NVIDIA_PCI_RAW}" ]]; then
+    RUNTIME_STATUS_FILE="/sys/bus/pci/devices/${NVIDIA_PCI_RAW}/power/runtime_status"
+    if [[ -f "$RUNTIME_STATUS_FILE" ]]; then
+        RUNTIME_STATUS="$(cat "$RUNTIME_STATUS_FILE" 2>/dev/null || true)"
+        if [[ "$RUNTIME_STATUS" == "active" ]]; then
+            ok "NVIDIA PCI runtime status is active (${NVIDIA_PCI_RAW})"
+        else
+            warn "NVIDIA PCI runtime status is ${RUNTIME_STATUS:-unknown} (${NVIDIA_PCI_RAW})"
+        fi
+    else
+        warn "Runtime status file missing for NVIDIA PCI device: ${NVIDIA_PCI_RAW}"
+    fi
+else
+    fail "No NVIDIA PCI device found via lspci"
+fi
+
+echo
+echo "Summary: PASS=$PASS WARN=$WARN FAIL=$FAIL"
+
+if (( STRICT == 1 && FAIL > 0 )); then
+    exit 1
+fi
+exit 0
+EOF
+RUN chmod +x /usr/local/bin/bootc/nvidia-hybrid-diagnostics.sh
+
+# Systemd service: distribute k3s kubeconfig to all local users after k3s server starts.
+# /etc/rancher/k3s/k3s.yaml is only created on the first successful 'k3s server' run,
+# so this cannot be done at post-install time — it must happen at runtime.
+RUN mkdir -p /usr/local/bin/bootc && \
+    cat > /usr/local/bin/bootc/k3s-distribute-kubeconfig.sh <<'KUBEEOF'
+#!/bin/bash
+# Distribute /etc/rancher/k3s/k3s.yaml to every local user's ~/.kube/config.
+# Called by k3s-kubeconfig-distribute.service after k3s.service activates.
+set -euo pipefail
+
+KUBECONFIG_SRC="/etc/rancher/k3s/k3s.yaml"
+
+# Wait up to 60 s for k3s to write its kubeconfig
+for i in $(seq 1 60); do
+    [ -f "$KUBECONFIG_SRC" ] && break
+    sleep 1
+done
+
+if [ ! -f "$KUBECONFIG_SRC" ]; then
+    echo "k3s kubeconfig not found after 60 s: $KUBECONFIG_SRC"
+    exit 1
+fi
+
+while IFS=: read -r username _ uid _ _ homedir shell; do
+    # Skip system accounts (UID < 1000) and shells that indicate non-login users
+    (( uid >= 1000 )) || continue
+    [[ "$shell" =~ (nologin|false|sync|halt|shutdown) ]] && continue
+    [[ "$homedir" =~ ^/ ]] || continue
+    [ -d "$homedir" ] || continue
+
+    mkdir -p "$homedir/.kube"
+
+    # If post-install already linked ~/.kube/config to the k3s source file,
+    # copying would be a same-file operation and fail under set -e.
+    if [ -L "$homedir/.kube/config" ] && [ "$(readlink -f "$homedir/.kube/config" 2>/dev/null || true)" = "$KUBECONFIG_SRC" ]; then
+        chown "${username}:${username}" "$homedir/.kube"
+        chmod 700 "$homedir/.kube"
+        echo "  k3s kubeconfig already linked for $username"
+        continue
+    fi
+
+    cp "$KUBECONFIG_SRC" "$homedir/.kube/config"
+    chown "${username}:${username}" "$homedir/.kube/config"
+    chown "${username}:${username}" "$homedir/.kube"
+    chmod 700 "$homedir/.kube"
+    chmod 600 "$homedir/.kube/config"
+    echo "  k3s kubeconfig → $homedir/.kube/config"
+done < /etc/passwd
+
+echo "k3s kubeconfig distribution complete"
+KUBEEOF
+RUN chmod +x /usr/local/bin/bootc/k3s-distribute-kubeconfig.sh
+
+# k3s pre-start script — extracted from the unit file to avoid systemd
+# line-continuation + shell-escaping interactions that corrupt variable values.
+# This script is also safe to call manually before 'sudo k3s server'.
+RUN cat > /usr/local/bin/bootc/k3s-pre-start.sh <<'PREEOF'
+#!/bin/bash
+# Pre-start helper for k3s.service in air-gapped environments.
+# Each step is best-effort: failures are logged but never abort the script.
+# Do NOT add set -e — every command must be allowed to fail gracefully.
+
+log() { echo "k3s-pre: $*"; }
+
+# 1. Kernel modules required by flannel/CNI and the dummy network interface.
+modprobe overlay      2>/dev/null || log "WARNING: overlay module unavailable"
+modprobe br_netfilter 2>/dev/null || log "WARNING: br_netfilter module unavailable"
+modprobe dummy        2>/dev/null || log "WARNING: dummy module unavailable (may be built-in)"
+
+# 2. Populate air-gap image directory from staged artifacts (idempotent).
+AIRGAP_SRC=/usr/share/k3s
+AIRGAP_DST=/var/lib/rancher/k3s/agent/images
+if ls "${AIRGAP_SRC}"/k3s-airgap-images-*.tar.zst >/dev/null 2>&1; then
+    mkdir -p "${AIRGAP_DST}"
+    for f in "${AIRGAP_SRC}"/k3s-airgap-images-*.tar.zst; do
+        dst="${AIRGAP_DST}/$(basename "$f")"
+        if [ ! -f "$dst" ]; then
+            cp "$f" "$dst" && log "staged $(basename "$f")"
+        fi
+    done
+fi
+
+# 3. Detect the primary non-loopback IPv4 address (scope global = excludes lo).
+#    Wait up to 30 s for NetworkManager to configure interfaces.
+NODE_IP=""
+for i in $(seq 1 30); do
+    NODE_IP=$(ip -4 addr show scope global 2>/dev/null \
+              | awk '/inet /{print $2}' \
+              | cut -d/ -f1 \
+              | head -1)
+    [ -n "$NODE_IP" ] && break
+    sleep 1
+done
+
+# 4. If still no IP (no LAN cable, fully isolated), create a kernel dummy
+#    interface with a stable private address so k3s has a valid node IP.
+#    Using 'scope global' in step 3 already excludes 127.x, so this only
+#    runs when truly no routable interface is configured.
+if [ -z "$NODE_IP" ]; then
+    DUMMY_IF=k3s-node
+    DUMMY_IP=10.0.2.1
+    if ! ip link show "${DUMMY_IF}" >/dev/null 2>&1; then
+        ip link add "${DUMMY_IF}" type dummy  2>/dev/null || log "WARNING: could not create dummy interface"
+        ip link set "${DUMMY_IF}" up          2>/dev/null || true
+        ip addr add "${DUMMY_IP}/24" dev "${DUMMY_IF}" 2>/dev/null || true
+        log "created dummy interface ${DUMMY_IF} (${DUMMY_IP}/24)"
+    fi
+    NODE_IP="${DUMMY_IP}"
+    log "no physical LAN IP found — using dummy node IP ${NODE_IP}"
+fi
+
+# 5. Ensure /proc/net/route has a default entry.
+#    k3s falls back to reading /proc/net/route even when node-ip is configured
+#    in some versions.  Route via the interface that owns NODE_IP; metric 65535
+#    so any real gateway always wins.
+#    Use 'scope global' to find the correct interface (not loopback).
+if ! ip route show default 2>/dev/null | grep -q '^default'; then
+    NODE_IF=$(ip -4 addr show scope global 2>/dev/null \
+              | awk '/inet /{print $NF; exit}')
+    NODE_IF="${NODE_IF:-lo}"
+    ip route add default dev "${NODE_IF}" metric 65535 2>/dev/null || true
+    log "dummy default route added via ${NODE_IF} (metric 65535)"
+fi
+
+# 6. Write node-ip into the MAIN k3s config (/etc/rancher/k3s/config.yaml).
+#    This is read by ALL k3s versions.  The config.yaml.d drop-in is also
+#    written for k3s v1.26+ which supports drop-in directories — belt and
+#    suspenders so the correct IP is picked up regardless of k3s version.
+MAIN_CFG=/etc/rancher/k3s/config.yaml
+if grep -q '^node-ip:' "${MAIN_CFG}" 2>/dev/null; then
+    # Replace existing node-ip line in-place
+    sed -i "s|^node-ip:.*|node-ip: \"${NODE_IP}\"|" "${MAIN_CFG}"
+else
+    # Append to config (file was created at image build time with other settings)
+    printf 'node-ip: "%s"\n' "${NODE_IP}" >> "${MAIN_CFG}"
+fi
+
+# Also write drop-in for k3s v1.26+ (drop-ins override main config)
+mkdir -p /etc/rancher/k3s/config.yaml.d
+printf 'node-ip: "%s"\n' "${NODE_IP}" \
+    > /etc/rancher/k3s/config.yaml.d/10-node-ip.yaml
+
+log "node-ip set to ${NODE_IP} in ${MAIN_CFG} and config.yaml.d/10-node-ip.yaml"
+PREEOF
+RUN chmod +x /usr/local/bin/bootc/k3s-pre-start.sh
+
+# Install k3s.service — runs "k3s server" as root at startup.
+# ExecStartPre calls the dedicated pre-start script so there are no
+# quoting/escaping issues from inline shell-in-unit-file constructs.
+RUN mkdir -p /usr/lib/systemd/system && \
+    cat > /usr/lib/systemd/system/k3s.service <<'UNITEOF'
+[Unit]
+Description=Lightweight Kubernetes (k3s server)
+Documentation=https://k3s.io
+# Soft dependency: k3s starts as soon as basic networking is up (network.target).
+# network-online.target is NOT used here — in air-gapped environments it may
+# stall indefinitely waiting for an upstream connection that never arrives.
+# IMPORTANT: k3s must wait for ntpdate-sync.service to complete, ensuring system
+# time is synchronized before certificates are generated. This prevents k3s
+# certificates from being issued with future timestamps due to skewed hardware clocks.
+Wants=network-online.target
+After=network.target systemd-modules-load.service ntpdate-sync.service
+
+[Service]
+Type=notify
+ExecStartPre=/usr/local/bin/bootc/k3s-pre-start.sh
+ExecStart=/usr/local/bin/k3s server
+KillMode=process
+Delegate=yes
+LimitNOFILE=1048576
+LimitNPROC=infinity
+LimitCORE=infinity
+TasksMax=infinity
+TimeoutStartSec=0
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
+UNITEOF
+
+# Install the systemd unit
+RUN mkdir -p /usr/lib/systemd/system && \
+    cat > /usr/lib/systemd/system/k3s-kubeconfig-distribute.service <<'UNITEOF'
+[Unit]
+Description=Distribute k3s kubeconfig to local users
+Documentation=man:k3s(1)
+After=k3s.service
+BindsTo=k3s.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/bootc/k3s-distribute-kubeconfig.sh
+
+[Install]
+WantedBy=k3s.service
+UNITEOF
+
+# k3s networking prerequisites — sysctl settings required by k3s / flannel
+# Applied at boot by systemd-sysctl.service before k3s starts.
+RUN mkdir -p /etc/sysctl.d && \
+    cat > /etc/sysctl.d/99-k3s.conf <<'EOF'
+# Required by k3s/flannel for pod-to-pod and pod-to-service routing
+net.ipv4.ip_forward = 1
+net.ipv6.conf.all.forwarding = 1
+# Allow bridge traffic to pass through iptables (needed by CNI / flannel)
+net.bridge.bridge-nf-call-iptables = 1
+net.bridge.bridge-nf-call-ip6tables = 1
+# Increase conntrack table size for cluster workloads
+net.netfilter.nf_conntrack_max = 131072
+EOF
+
+# k3s route-setup service — adds pod CIDR and service CIDR routes for the
+# flannel interface so they survive in an air-gapped environment where no
+# cloud provider or DHCP helper re-publishes them.
+# Default k3s CIDRs: pods 10.42.0.0/16, services 10.96.0.0/12.
+# Runs after k3s.service is active; idempotent (ip route add ... 2>/dev/null || true).
+RUN mkdir -p /usr/lib/systemd/system && \
+    cat > /usr/lib/systemd/system/k3s-route-setup.service <<'UNITEOF'
+[Unit]
+Description=Configure IP routes for k3s air-gapped networking
+Documentation=https://docs.k3s.io/installation/network-options
+After=k3s.service network-online.target
+Wants=network-online.target
+BindsTo=k3s.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Wait until the flannel.1 interface appears (k3s creates it on first run)
+ExecStartPre=/bin/sh -c ' \
+    for i in $(seq 1 60); do \
+        ip link show flannel.1 >/dev/null 2>&1 && exit 0; \
+        sleep 1; \
+    done; \
+    echo "WARNING: flannel.1 interface not found after 60 s"; exit 0'
+# Ensure pod-network and service-network routes exist via the flannel interface
+ExecStart=/bin/sh -c ' \
+    FLANNEL_IF=flannel.1; \
+    POD_CIDR=10.42.0.0/16; \
+    SVC_CIDR=10.96.0.0/12; \
+    if ip link show "$FLANNEL_IF" >/dev/null 2>&1; then \
+        ip route add "$POD_CIDR" dev "$FLANNEL_IF" 2>/dev/null || true; \
+        ip route add "$SVC_CIDR" dev "$FLANNEL_IF" 2>/dev/null || true; \
+        echo "k3s routes ensured: $POD_CIDR  $SVC_CIDR via $FLANNEL_IF"; \
+    else \
+        echo "flannel.1 not present — skipping route setup"; \
+    fi'
+
+[Install]
+WantedBy=k3s.service
+UNITEOF
+
+# Enable services (set default in image; post-install script re-runs for explicit confirmation)
+# Mask systemd-remount-fs.service: in a bootc/ostree image the root filesystem is
+# a composefs overlay managed by ostree. systemd-remount-fs tries to re-apply
+# /etc/fstab options to / and /etc at boot — but bootc images ship without an
+# /etc/fstab and the composefs root cannot be remounted, causing a guaranteed
+# failure that pollutes the journal and shows in 'systemctl --failed'.
+RUN systemctl enable gdm || true && \
+    systemctl enable xrdp || true && \
+    if systemctl list-unit-files | grep -q '^bootc-fetch-apply-updates\.timer'; then systemctl enable bootc-fetch-apply-updates.timer || true; fi && \
+    for UNIT in nvidia-suspend.service nvidia-hibernate.service nvidia-resume.service nvidia-powerd.service switcheroo-control.service; do if systemctl list-unit-files | grep -q "^${UNIT}"; then systemctl enable "$UNIT" || true; fi; done && \
+    systemctl enable k3s.service || true && \
+    systemctl enable k3s-kubeconfig-distribute.service || true && \
+    systemctl enable k3s-route-setup.service || true && \
+    systemctl mask systemd-remount-fs.service || true && \
+    systemctl set-default graphical.target || true
+
+# Create README in users' home
+RUN cat > /etc/skel/README.txt <<'EOF'
+BOOTC Bootc Workstation — Quick Start & Post-Boot Tasks
+=====================================================
+
+This system image ships with helper scripts and pre-cached artifacts under
+`/usr/local/bin/bootc/` and caches under `/opt` so that air-gapped installs
+work out of the box.
+
+Key scripts (location: `/usr/local/bin/bootc/`)
+- `bootc-post-install.sh` — consolidated admin post-install tasks. Run as root.
+        - Usage highlights: `sudo /usr/local/bin/bootc/bootc-post-install.sh [options] [users...]`
+        - Supported flags:
+            - `--bootc-user NAME`  : username to create during the bootc user step
+            - `--bootc-password-file FILE` : read password from file (preferred — avoids exposing credentials in ps/cmdline)
+            - `--bootc-password PASS` : password to set during the bootc user step (insecure: visible in ps; use --bootc-password-file)
+            - `--skip-extensions` : do not install VS Code extensions
+            - `--skip-readme`     : do not copy README to user desktops
+            - `--skip-services`   : skip enabling GUI services (display manager/xrdp/graphical.target)
+            - `--skip-nvidia`     : skip NVIDIA verification checks
+            - `--run-nvidia-diagnostics` : run the NVIDIA hybrid diagnostics report
+            - `--skip-docker`     : skip adding users to `docker` group
+            - `--skip-podman`     : skip podman socket enablement steps
+            - `--skip-create-user`: skip creating the configured bootc user
+            - `--only-steps LIST` : run only the comma-separated steps (create_user,extensions,readme,services,nvidia,nvidia-diagnostics,docker,podman)
+        - Examples:
+            - Run all admin setup: `sudo /usr/local/bin/bootc/bootc-post-install.sh`
+            - Create a specific user non-interactively: `printf 'mypassword' > /root/.bootc-pw && chmod 600 /root/.bootc-pw && sudo /usr/local/bin/bootc/bootc-post-install.sh --bootc-user alice --bootc-password-file /root/.bootc-pw && rm /root/.bootc-pw`
+            - Run only user creation and services: `sudo /usr/local/bin/bootc/bootc-post-install.sh --only-steps create_user,services`
+            - Run only NVIDIA diagnostics: `sudo /usr/local/bin/bootc/bootc-post-install.sh --only-steps nvidia-diagnostics`
+            - Install extensions for a specific user: `sudo /usr/local/bin/bootc/bootc-post-install.sh alice`
+
+- `install-js-frameworks.sh` — installs common JS frameworks globally (optional).
+
+Where cached/offline files are placed
+- OpenShift/Kubernetes tools: `/usr/local/bin/bootc/oc`, `/usr/local/bin/bootc/kubectl`
+- Pre-downloaded RPMs: staged under `/opt/offline/` and installed during build
+
+Post-boot recommended steps (first boot)
+1. Ensure network is configured (NetworkManager GUI or `nmcli`).
+2. As root, run the consolidated post-install to complete admin setup:
+     `sudo /usr/local/bin/bootc/bootc-post-install.sh`
+     - Use `--skip-...` flags to disable parts you don't want to run.
+     - To only perform specific actions use `--only-steps`.
+3. Reboot if `bootc-post-install.sh` indicates services or kernel modules need it.
+
+Per-user tasks
+- After first login, users who need the Podman user socket can enable it locally:
+    `systemctl --user enable --now podman.socket`
+    (If lingering is desired for the account, `sudo loginctl enable-linger <user>`.)
+
+Verifications
+- NVIDIA: run `nvidia-smi` after reboot to confirm driver and kernel module functionality.
+- VS Code extensions: run `code --list-extensions` as the user to confirm installed extensions.
+
+Troubleshooting notes
+- Many build-time warnings are expected in container-built images (e.g. pip running as root,
+    systemd messages while running in a build container). The post-install script performs
+    the runtime steps that require an installed system.
+- If podman socket setup fails in the post-install script, run the user `systemctl --user`
+    commands after the user first logs in.
+
+Useful commands
+- Run post-install (admin): `sudo /usr/local/bin/bootc/bootc-post-install.sh`
+- Install JS frameworks (admin): `sudo /usr/local/bin/bootc/install-js-frameworks.sh`
+- Check OpenShift tools: `oc version && kubectl version`
+
+EOF
+
+# Bootc configuration
+RUN echo 'BOOTC Bootc' > /etc/hostname && \
+    (grep -q "\bBOOTC Bootc\b" /etc/hosts || echo "127.0.1.1    BOOTC Bootc" >> /etc/hosts)
+
+# Final cleanup
+RUN dnf -y clean all && rm -rf /var/cache/dnf /tmp/* /var/tmp/*

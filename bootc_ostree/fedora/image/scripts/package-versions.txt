@@ -1,0 +1,63 @@
+# Popular Web Development Frameworks & Tools
+# Format: package-name or package-name@version
+# One package per line. Comments and blank lines are ignored.
+
+# Frontend Frameworks
+react@latest
+react-dom@latest
+vue@latest
+angular@latest
+svelte@latest
+
+# Meta Frameworks & Tooling
+next@latest
+nuxt@latest
+gatsby@latest
+remix@latest
+astro@latest
+vite@latest
+
+# Backend & Full-Stack
+express@latest
+nestjs@latest
+fastify@latest
+
+# Core DevTools
+typescript@latest
+webpack@latest
+rollup@latest
+parcel@latest
+babel@latest
+esbuild@latest
+
+# Linting & Formatting
+eslint@latest
+prettier@latest
+stylelint@latest
+
+# Testing Frameworks
+jest@latest
+vitest@latest
+mocha@latest
+chai@latest
+
+# Build & Task Runners
+gulp@latest
+grunt@latest
+
+# State Management
+redux@latest
+zustand@latest
+pinia@latest
+
+# UI Component Libraries
+tailwindcss@latest
+bootstrap@latest
+material-ui@latest
+
+# Utilities & Libraries
+lodash@latest
+axios@latest
+graphql@latest
+socket.io@latest
+axios@latest

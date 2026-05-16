@@ -1,0 +1,301 @@
+# syntax=docker/dockerfile:1.4
+# Bare bootc system image for two-step deployment
+# Includes: GNOME desktop baseline, Podman, bootc switch workflow helpers
+
+FROM quay.io/fedora/fedora-bootc:44
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+LABEL name="BOOTC Bare Workstation"
+LABEL version="1.0-bare"
+LABEL description="Bare Fedora bootc image for two-step deployment (GUI + podman baseline)"
+
+RUN ln -sf /usr/share/zoneinfo/Asia/Singapore /etc/localtime && \
+    echo "Asia/Singapore" > /etc/timezone
+
+RUN mkdir -p /etc/chrony.d && \
+    echo "# Custom NTP servers" > /etc/chrony.d/custom-servers.conf && \
+    echo "server time.windows.com iburst" >> /etc/chrony.d/custom-servers.conf && \
+    echo "server time.nist.gov iburst" >> /etc/chrony.d/custom-servers.conf && \
+    echo "server pool.ntp.org iburst" >> /etc/chrony.d/custom-servers.conf
+
+RUN mkdir -p /usr/local/bin/bootc /usr/lib/systemd/system && \
+    printf '%s\n' \
+        '#!/usr/bin/env bash' \
+        'set -euo pipefail' \
+        '' \
+        'mapfile -t ntp_servers < <(awk '\''$1 == "server" { print $2 }'\'' /etc/chrony.d/custom-servers.conf 2>/dev/null)' \
+        '' \
+        'if [ ${#ntp_servers[@]} -eq 0 ]; then' \
+        '    ntp_servers=(time.windows.com time.nist.gov pool.ntp.org)' \
+        'fi' \
+        '' \
+        'exec /usr/sbin/ntpdate -ub "${ntp_servers[@]}"' \
+        > /usr/local/bin/bootc/ntpdate-sync.sh && \
+    chmod 0755 /usr/local/bin/bootc/ntpdate-sync.sh && \
+    printf '%s\n' \
+        '[Unit]' \
+        'Description=Initial NTP sync before chronyd' \
+        'Wants=network-online.target' \
+        'After=network-online.target' \
+        'Before=chronyd.service' \
+        'ConditionPathExists=/usr/sbin/ntpdate' \
+        '' \
+        '[Service]' \
+        'Type=oneshot' \
+        'ExecStart=/usr/local/bin/bootc/ntpdate-sync.sh' \
+        'RemainAfterExit=yes' \
+        '' \
+        '[Install]' \
+        'WantedBy=multi-user.target' \
+        > /usr/lib/systemd/system/ntpdate-sync.service
+
+COPY ca-bundle.crt /etc/pki/ca-trust/source/anchors/bootc-local-ca.crt
+RUN update-ca-trust
+
+RUN sed -i '/^tsflags/ d' /etc/dnf/dnf.conf && echo 'tsflags=nodocs' >> /etc/dnf/dnf.conf && \
+    dnf -y install glibc-minimal-langpack langpacks-en || true && \
+    dnf -y remove glibc-all-langpacks || true && \
+    dnf -y clean all && rm -rf /var/cache/dnf
+
+# Install GNOME desktop and related utilities, but kept intentionally minimal
+RUN dnf -y --setopt=install_weak_deps=False install \
+    gnome-shell gnome-session gdm \
+    gnome-control-center gnome-terminal gnome-text-editor nautilus \
+    gnome-system-monitor gnome-disk-utility gnome-tweaks \
+    xorg-x11-server-Xorg mesa-dri-drivers \
+    network-manager-applet \
+    ntpdate traceroute \
+    # Audio and multimedia support (ALSA + PipeWire)
+    intel-audio-firmware alsa-sof-firmware alsa-firmware \
+    pipewire-alsa pipewire-pulseaudio wireplumber alsa-utils \
+    podman slirp4netns fuse-overlayfs \
+    # Windows network discovery and file sharing
+    samba samba-client samba-common cifs-utils \
+    avahi avahi-tools nss-mdns \
+    wsdd \
+    # GNOME SMB/Windows network browsing support
+    gvfs-smb \
+    git vim-minimal curl wget \
+    sudo passwd shadow-utils \
+    dracut dracut-live \
+    grub2-pc grub2-pc-modules \
+    grub2-efi-x64 grub2-efi-x64-modules grub2-efi-x64-cdboot \
+    grub2-tools grub2-tools-efi \
+    efibootmgr shim-x64 \
+    && dnf -y clean all && rm -rf /var/cache/dnf
+
+# Install NVIDIA proprietary drivers (driver-only, no CUDA toolkit payload)
+RUN (dnf -y --setopt=install_weak_deps=False install \
+        https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm || \
+    echo "RPM Fusion nonfree repository already installed or installation failed") && \
+    dnf -y --setopt=install_weak_deps=False install \
+        akmods \
+        kernel-devel \
+        kernel-headers \
+        gcc \
+        make \
+        && \
+    dnf -y --setopt=install_weak_deps=False install --best --allowerasing \
+        akmod-nvidia \
+        xorg-x11-drv-nvidia \
+        nvidia-settings \
+        nvidia-persistenced \
+        && \
+    dnf -y clean all && rm -rf /var/cache/dnf
+
+# Build NVIDIA modules inside the image for immutable bootc deployments.
+RUN if [ -f /usr/sbin/akmods ]; then \
+        echo "Building NVIDIA kernel modules for installed kernel(s)..."; \
+        KERNEL_VERSIONS=$(rpm -q kernel --qf '%{VERSION}-%{RELEASE}.%{ARCH}\n' 2>/dev/null); \
+        if [ -n "$KERNEL_VERSIONS" ]; then \
+            if akmods --force; then \
+                echo "akmods build completed"; \
+            else \
+                echo "Warning: akmods failed to build NVIDIA modules"; \
+            fi; \
+            mkdir -p /etc/modprobe.d; \
+            printf '%s\n' \
+                '# NVIDIA power management for Wayland suspend/resume stability' \
+                'options nvidia_drm modeset=1' \
+                'options nvidia_drm fbdev=1' \
+                'options nvidia NVreg_PreserveVideoMemoryAllocations=1' \
+                'options nvidia NVreg_TemporaryFilePath=/var/tmp' \
+                'options nvidia NVreg_EnableGpuFirmware=0' \
+                > /etc/modprobe.d/nvidia-pm.conf; \
+            dracut -f --regenerate-all || echo "Warning: dracut regeneration failed"; \
+        else \
+            echo "Warning: No kernel packages found, skipping akmods build"; \
+        fi; \
+    else \
+        echo "Warning: akmods not found, NVIDIA kernel module build skipped"; \
+    fi
+
+RUN mkdir -p /etc/modprobe.d /etc/dracut.conf.d && \
+    printf '%s\n' \
+    '# Blacklist nouveau to avoid conflicts with proprietary NVIDIA drivers' \
+      'blacklist nouveau' \
+      'options nouveau modeset=0' \
+      > /etc/modprobe.d/blacklist-nouveau.conf && \
+    printf '%s\n' \
+      '# Additional hard block for nouveau module autoload' \
+      'install nouveau /bin/false' \
+      'alias nouveau off' \
+      > /etc/modprobe.d/blacklist-nouveau-extra.conf && \
+    printf '%s\n' \
+      '# Increase dracut root wait tolerance for flaky USB enumeration at boot' \
+      'rootdelay="20"' \
+      'rd.timeout="120"' \
+      > /etc/dracut.conf.d/10-bootc-usb-reliability.conf
+
+# Enable network discovery, audio time sync, and Samba services
+RUN systemctl enable ntpdate-sync.service && \
+    systemctl enable chronyd.service && \
+    systemctl enable avahi-daemon.service && \
+        systemctl enable wsdd.service && \
+        systemctl enable smb.service && \
+        systemctl enable nmb.service
+
+# Configure Samba for Windows network discovery
+RUN mkdir -p /etc/samba && \
+        cat > /etc/samba/smb.conf <<'EOF'
+[global]
+     workgroup = WORKGROUP
+     server string = BOOTC Bare Workstation
+     security = user
+     map to guest = Never
+     dns proxy = no
+   
+     # Network discovery settings (server side - be visible to Windows)
+     local master = yes
+     preferred master = yes
+     os level = 35
+   
+     # Client browsing settings (discover Windows machines)
+     name resolve order = bcast host lmhosts wins
+     client use spnego = yes
+     client ntlmv2 auth = yes
+   
+     # Enable WSD/LLMNR for Windows 10+ discovery
+     multicast dns register = yes
+   
+     # Logging
+     log file = /var/log/samba/log.%m
+     max log size = 50
+   
+     # Sync Linux password changes into the Samba password database
+     unix password sync = yes
+     passwd program = /usr/bin/passwd %u
+     pam password change = yes
+
+     # Performance and compatibility
+     server min protocol = SMB2
+     client min protocol = SMB2
+   
+     # Allow browsing of Windows workgroups and computers
+     remote browse sync = yes
+     remote announce = 255.255.255.255/WORKGROUP
+   
+     # User shares (allow regular users to create and manage shares)
+     usershare path = /var/lib/samba/usershares
+     usershare max shares = 100
+     usershare allow guests = no
+     usershare owner only = yes
+   
+[homes]
+     comment = User Home Directories
+     browseable = yes
+     read only = no
+     writable = yes
+     valid users = %S
+     create mask = 0644
+     directory mask = 0755
+     path = %H
+
+[UserHomes]
+     comment = All User Home Directories
+     path = /home
+     browseable = yes
+     read only = no
+     guest ok = no
+     create mask = 0644
+     directory mask = 0755
+
+# Example share (commented out - users can enable as needed)
+# [Public]
+#    comment = Public Share
+#    path = /srv/samba/public
+#    browseable = yes
+#    read only = no
+#    guest ok = yes
+#    create mask = 0644
+#    directory mask = 0755
+EOF
+
+# Set default home directory permissions to 0755 so Samba can serve cross-user access
+# (individual user authentication via Samba still required; Linux FS governs reads)
+RUN sed -i 's/^HOME_MODE.*/HOME_MODE 0755/' /etc/login.defs
+
+# Set up usershares directory with proper permissions
+RUN mkdir -p /var/lib/samba/usershares && \
+        chmod 1770 /var/lib/samba/usershares && \
+        chown root:root /var/lib/samba/usershares
+
+# SELinux boolean service: samba_enable_home_dirs must be on for Samba to serve /home/*/
+# The boolean lives in /var/lib/selinux/ (runtime-writable), so we use a oneshot unit
+# that runs before smb.service on every boot and sets it persistently.
+RUN mkdir -p /usr/lib/systemd/system && \
+        cat > /usr/lib/systemd/system/samba-selinux-setup.service <<'SEEOF'
+[Unit]
+Description=Set SELinux booleans required for Samba home-directory sharing
+DefaultDependencies=no
+Before=smb.service nmb.service
+After=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/setsebool -P samba_enable_home_dirs 1
+
+[Install]
+WantedBy=multi-user.target
+SEEOF
+RUN systemctl enable samba-selinux-setup.service
+
+# Create Avahi service file for SMB/CIFS advertisement
+RUN mkdir -p /etc/avahi/services && \
+        cat > /etc/avahi/services/smb.service <<'EOF'
+<?xml version="1.0" standalone='no'?>
+<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
+<service-group>
+    <name replace-wildcards="yes">%h</name>
+    <service>
+        <type>_smb._tcp</type>
+        <port>445</port>
+    </service>
+    <service>
+        <type>_device-info._tcp</type>
+        <port>0</port>
+        <txt-record>model=LinuxWorkstation</txt-record>
+    </service>
+</service-group>
+EOF
+
+COPY BOOTC-README-bare.md /usr/local/bin/bootc/BOOTC-README.md
+
+RUN mkdir -p /etc/skel/Desktop && \
+    cp /usr/local/bin/bootc/BOOTC-README.md /etc/skel/BOOTC-README.md && \
+    cp /usr/local/bin/bootc/BOOTC-README.md /etc/skel/Desktop/BOOTC-README.md && \
+    chmod 644 /etc/skel/BOOTC-README.md && \
+    chmod 644 /etc/skel/Desktop/BOOTC-README.md
+
+RUN systemctl enable gdm || true && \
+    if systemctl list-unit-files | grep -q '^switcheroo-control\.service'; then systemctl enable switcheroo-control.service || true; fi && \
+    if systemctl list-unit-files | grep -q '^nvidia-powerd\.service'; then systemctl enable nvidia-powerd.service || true; fi && \
+    systemctl set-default graphical.target || true && \
+    dracut -f --regenerate-all || true
+
+RUN echo 'BOOTC Bare' > /etc/hostname && \
+    (grep -q "\bBOOTC Bare\b" /etc/hosts || echo "127.0.1.1    BOOTC Bare" >> /etc/hosts)
+
+RUN dnf -y clean all && rm -rf /var/cache/dnf /tmp/* /var/tmp/*
