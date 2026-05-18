@@ -15,13 +15,10 @@ This guide covers:
 From repo root:
 
 ```bash
-make fetch
+make fetch-full
 make build-iso
-make build-iso-ni
-make build-iso-minimal
-make build-iso-docker
-make build-iso-full
-make build-iso-compare
+make build-iso-bare
+make build-oci-full
 make verify-iso
 ```
 
@@ -148,13 +145,13 @@ Control image size by including or excluding optional packages via `--build-arg`
 | Rations/Minecraft | `EXCLUDE_RATIONS=yes` | ~50 MB | Enabled by default |
 | **CUDA Toolkit + cuDNN** | `EXCLUDE_CUDA_TOOLKIT=yes` | ~1 GB | **Enabled by default**; enables ML development (nvcc, CUDA runtime, cuDNN) |
 
-**Example: Build minimal ISO (exclude all optional packages including CUDA):**
+**Example: Build a bare ISO (GUI + podman baseline):**
 ```bash
-make build-iso-minimal
+make build-iso-bare
 
 # Or manually:
 ./bootc_ostree/fedora/build-scripts/build_export_iso.sh interactive \
-  --iso-name bootc-minimal.iso \
+  --iso-name bootc-bare.iso \
   --build-arg EXCLUDE_BLENDER=yes \
   --build-arg EXCLUDE_DOCKER_DESKTOP=yes \
   --build-arg EXCLUDE_GIMP_KRITA=yes \
@@ -164,9 +161,8 @@ make build-iso-minimal
 
 **Example: Build without CUDA (exclude CUDA, keep other packages):**
 ```bash
-make build-iso-minimal-nocuda
-
-# Or manually:
+# There is not a dedicated Make target for this mode;
+# use the direct build script instead.
 ./bootc_ostree/fedora/build-scripts/build_export_iso.sh interactive \
   --iso-name bootc-nocuda.iso \
   --build-arg EXCLUDE_CUDA_TOOLKIT=yes
@@ -174,7 +170,7 @@ make build-iso-minimal-nocuda
 
 **Example: Build full ISO with everything including CUDA (default):**
 ```bash
-make build-iso-full
+make build-iso
 
 # Manually (showing explicit inclusion is not needed as default):
 ./bootc_ostree/fedora/build-scripts/build_export_iso.sh interactive \

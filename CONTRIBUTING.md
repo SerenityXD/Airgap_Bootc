@@ -31,9 +31,10 @@ Welcome! This guide will help you understand the repository structure, common wo
 ## Getting Started
 
 ### Prerequisites
-- Linux system (Fedora, RHEL, Ubuntu, or WSL2)
+- Linux system (Fedora, RHEL, or WSL2)
 - `podman` or Docker
 - `bash 4+`
+- `git`, `unzip`, `wget`, `tar`, `xz`
 - ~70 GB free disk space
 - Internet access (for fetching offline artifacts)
 
@@ -48,7 +49,7 @@ Welcome! This guide will help you understand the repository structure, common wo
 
 2. **Fetch offline artifacts (required for air-gapped builds):**
    ```bash
-   make fetch  # Downloads all offline packages
+   make fetch-full  # Downloads all offline packages, VS Code extensions, and npm tarballs
    ```
 
 3. **Test your environment:**
@@ -60,7 +61,7 @@ Welcome! This guide will help you understand the repository structure, common wo
 4. **Build the image (takes 30-60 minutes):**
    ```bash
    make build-iso-bare # builds the bare minimum ISO
-   make build-oci-full # builts the full image to be loaded with bootc
+   make build-oci-full # builds the full OCI archive from the built image
 
    make build-iso  # Builds the full ISO
    ```
@@ -142,11 +143,11 @@ make build-iso
 # Exclude Blender only
 make build-iso EXTRA_BUILD_ARGS='--build-arg EXCLUDE_BLENDER=yes'
 
-# Minimal ISO (no optional packages)
-make build-iso-minimal
+# Bare ISO (GUI + podman baseline)
+make build-iso-bare
 
 # Full ISO with everything
-make build-iso-full
+make build-iso
 ```
 
 Available build arguments (see Containerfile for full list):
@@ -187,8 +188,7 @@ Available build arguments (see Containerfile for full list):
        --help  # Shows all available options
 
    # Quick build (no optional packages)
-   make build-iso-minimal
-   ```
+   make build-iso-bare
 
 3. **Check ISO contents:**
    ```bash
@@ -240,7 +240,7 @@ Available build arguments (see Containerfile for full list):
 ## Troubleshooting Development Issues
 
 ### Build fails with "offline artifact missing"
-- Run fetch scripts: `make fetch` or `make fetch-optional`
+- Run fetch scripts: `make fetch-full`
 - Check artifact directory: `ls bootc_ostree/fedora/image/offline-repo/<vendor>/`
 
 ### Script doesn't find common.sh
@@ -252,7 +252,7 @@ Available build arguments (see Containerfile for full list):
 
 ### Container build takes forever
 - First build (especially with `--no-cache`) is slow; subsequent builds use cache
-- Use `make build-iso-minimal` for faster iteration
+- Use `make build-iso-bare` for faster iteration
 - Check disk space: `df -h`
 
 ### ISO verification fails
