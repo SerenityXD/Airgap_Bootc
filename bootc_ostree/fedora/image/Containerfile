@@ -108,6 +108,8 @@ RUN echo "Installing GNOME desktop environment" && \
     wsdd \
     # Desktop SMB/Windows network browsing support
     gvfs-smb \
+    # Additional archive tools
+    ark unrar \
     && dnf -y clean all && rm -rf /var/cache/dnf
 
 # Enable network discovery services and time synchronization
@@ -254,7 +256,7 @@ RUN dnf -y --setopt=install_weak_deps=False install \
     && dnf -y clean all && rm -rf /var/cache/dnf
 
 # Install offline wallpapers. Also register them and set a default via dconf for GNOME.
-RUN --mount=type=bind,source=offline-repo/wallpapers,target=/tmp/offline/wallpapers,relabel=shared,readonly \
+RUN --mount=type=bind,source=offline-repo/wallpapers,target=/tmp/offline/wallpapers,readonly \
     mkdir -p /usr/share/backgrounds/bootc && \
     mapfile -t WALLPAPER_FILES < <(find /tmp/offline/wallpapers -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.webp' -o -iname '*.bmp' \) | sort) && \
     if [ ${#WALLPAPER_FILES[@]} -eq 0 ]; then \
@@ -305,7 +307,7 @@ RUN --mount=type=bind,source=offline-repo/wallpapers,target=/tmp/offline/wallpap
 #     `gnome-extensions enable` which *appends* to the user's extension list.
 #     This is the reliable path for users whose dconf user-db already has an
 #     enabled-extensions entry (overrides the system-db default).
-RUN --mount=type=bind,source=gnome-extensions/screen-watermark@bootc.local,target=/tmp/gnome-ext/screen-watermark@bootc.local,relabel=shared,readonly \
+RUN --mount=type=bind,source=gnome-extensions/screen-watermark@bootc.local,target=/tmp/gnome-ext/screen-watermark@bootc.local,readonly \
     mkdir -p /usr/share/gnome-shell/extensions && \
     cp -a /tmp/gnome-ext/screen-watermark@bootc.local /usr/share/gnome-shell/extensions/screen-watermark@bootc.local && \
     mkdir -p /etc/dconf/db/local.d /etc/xdg/autostart && \
@@ -433,8 +435,8 @@ RUN if [ "$EXCLUDE_BLENDER" != "yes" ]; then \
     fi
 
 # Install OBS Studio and multimedia codecs (offline preferred, online fallback)
-RUN --mount=type=bind,source=offline-repo/obs,target=/tmp/offline/obs,relabel=shared,readonly \
-    --mount=type=bind,source=offline-repo/rpmfusion,target=/tmp/offline/rpmfusion,relabel=shared,readonly \
+RUN --mount=type=bind,source=offline-repo/obs,target=/tmp/offline/obs,readonly \
+    --mount=type=bind,source=offline-repo/rpmfusion,target=/tmp/offline/rpmfusion,readonly \
     install_from_local_rpm_repo() { \
         local repo_id="$1"; \
         local repo_dir="$2"; \
@@ -632,7 +634,7 @@ RUN mkdir -p /etc/modprobe.d /etc/dracut.conf.d && \
 # ML frameworks (PyTorch, TensorFlow) can be installed post-boot via pip without precaching wheels.
 # cuDNN is not included as it requires NVIDIA registration; install manually if needed.
 # Offline packages are preferred if available; falls back to online repository if not.
-RUN --mount=type=bind,source=offline-repo/cuda,target=/tmp/offline/cuda,relabel=shared,readonly \
+RUN --mount=type=bind,source=offline-repo/cuda,target=/tmp/offline/cuda,readonly \
     if [ "$EXCLUDE_CUDA_TOOLKIT" != "yes" ]; then \
         offline_installed=0; \
         if compgen -G "/tmp/offline/cuda/*.rpm" >/dev/null; then \
@@ -679,7 +681,7 @@ RUN --mount=type=bind,source=offline-repo/cuda,target=/tmp/offline/cuda,relabel=
     fi
 
 # Install VS Code (offline preferred, online fallback — either path must succeed)
-RUN --mount=type=bind,source=offline-repo/vscode,target=/tmp/offline/vscode,relabel=shared,readonly \
+RUN --mount=type=bind,source=offline-repo/vscode,target=/tmp/offline/vscode,readonly \
     if [ -n "$(find /tmp/offline/vscode/ -maxdepth 1 -type f -name '*.rpm' 2>/dev/null)" ]; then \
         echo "Installing VS Code from offline repo..."; \
         find /tmp/offline/vscode/ -maxdepth 1 -type f -name 'code-*.rpm' -exec dnf -y install {} \; ; \
@@ -693,7 +695,7 @@ RUN --mount=type=bind,source=offline-repo/vscode,target=/tmp/offline/vscode,rela
     dnf -y clean all && rm -rf /var/cache/dnf
 
 # Install WineHQ (offline preferred, online fallback)
-RUN --mount=type=bind,source=offline-repo/winehq,target=/tmp/offline/winehq,relabel=shared,readonly \
+RUN --mount=type=bind,source=offline-repo/winehq,target=/tmp/offline/winehq,readonly \
     if [ -n "$(find /tmp/offline/winehq -maxdepth 1 -type f -name '*.rpm' ! -name '*.src.rpm' 2>/dev/null)" ]; then \
         echo "Installing WineHQ from offline repo..."; \
         find /tmp/offline/winehq -maxdepth 1 -type f -name '*.src.rpm' -print | sed 's/^/  Skipping source RPM: /' || true; \
@@ -712,7 +714,7 @@ RUN echo "Installing Lutris from Fedora repositories..." && \
     dnf -y clean all && rm -rf /var/cache/dnf
 
 # Install Lutris Runners (Dw Proton, DXVK, VKD3D-Proton, Proton-GE) from offline repo
-RUN --mount=type=bind,source=offline-repo/lutris-runners,target=/tmp/offline/lutris-runners,relabel=shared,readonly \
+RUN --mount=type=bind,source=offline-repo/lutris-runners,target=/tmp/offline/lutris-runners,readonly \
     echo "Setting up Lutris runners (Dw Proton, DXVK, VKD3D-Proton, Proton-GE)..." && \
     mkdir -p /opt/lutris-runners && \
     RUNNERS_DIR="/opt/lutris-runners" && \
@@ -723,6 +725,20 @@ RUN --mount=type=bind,source=offline-repo/lutris-runners,target=/tmp/offline/lut
                 runner_name=$(basename "$runner_file" .tar.gz); \
                 echo "    Extracting: $runner_name"; \
                 tar -xzf "$runner_file" -C "$RUNNERS_DIR" 2>/dev/null || true; \
+            fi; \
+        done; \
+        for runner_file in /tmp/offline/lutris-runners/*.tar.xz; do \
+            if [ -f "$runner_file" ]; then \
+                runner_name=$(basename "$runner_file" .tar.xz); \
+                echo "    Extracting: $runner_name"; \
+                tar -xJf "$runner_file" -C "$RUNNERS_DIR" 2>/dev/null || true; \
+            fi; \
+        done; \
+        for runner_file in /tmp/offline/lutris-runners/*.tar.zst; do \
+            if [ -f "$runner_file" ]; then \
+                runner_name=$(basename "$runner_file" .tar.zst); \
+                echo "    Extracting: $runner_name"; \
+                tar -I zstd -xf "$runner_file" -C "$RUNNERS_DIR" 2>/dev/null || true; \
             fi; \
         done; \
         for runner_file in /tmp/offline/lutris-runners/*.zip; do \
@@ -774,7 +790,7 @@ RUN mkdir -p /usr/local/bin/bootc && \
 
 # Install Docker Desktop - OPTIONAL (404MB offline package)
 # To exclude, use: podman build --build-arg EXCLUDE_DOCKER_DESKTOP=yes
-RUN --mount=type=bind,source=offline-repo/docker-desktop,target=/tmp/offline/docker-desktop,relabel=shared,readonly \
+RUN --mount=type=bind,source=offline-repo/docker-desktop,target=/tmp/offline/docker-desktop,readonly \
     if [ "$EXCLUDE_DOCKER_DESKTOP" != "yes" ]; then \
         DOCKER_COPY_DIR="/tmp/offline/docker-desktop" && \
         echo "Installing Docker Desktop (OPTIONAL package)..."; \
@@ -801,8 +817,8 @@ RUN --mount=type=bind,source=offline-repo/docker-desktop,target=/tmp/offline/doc
 
 # Install GIMP and Krita - OPTIONAL (350MB + 161MB for offline packages)
 # To exclude, use: podman build --build-arg EXCLUDE_GIMP_KRITA=yes
-RUN --mount=type=bind,source=offline-repo/gimp,target=/tmp/offline/gimp,relabel=shared,readonly \
-    --mount=type=bind,source=offline-repo/krita,target=/tmp/offline/krita,relabel=shared,readonly \
+RUN --mount=type=bind,source=offline-repo/gimp,target=/tmp/offline/gimp,readonly \
+    --mount=type=bind,source=offline-repo/krita,target=/tmp/offline/krita,readonly \
     if [ "$EXCLUDE_GIMP_KRITA" != "yes" ]; then \
         echo "Installing GIMP and Krita (OPTIONAL packages)..."; \
         install_local_or_fedora() { \
@@ -828,7 +844,7 @@ RUN --mount=type=bind,source=offline-repo/gimp,target=/tmp/offline/gimp,relabel=
     fi
 
 # Install draw.io (offline preferred, online fallback)
-RUN --mount=type=bind,source=offline-repo/drawio,target=/tmp/offline/drawio,relabel=shared,readonly \
+RUN --mount=type=bind,source=offline-repo/drawio,target=/tmp/offline/drawio,readonly \
     if [ -n "$(ls -A /tmp/offline/drawio/*.rpm 2>/dev/null)" ]; then \
         echo "Installing draw.io from offline repo..."; \
         dnf -y install /tmp/offline/drawio/*.rpm || true; \
@@ -989,7 +1005,7 @@ EOF
 RUN chmod +x /usr/local/bin/bootc/automount-drive.sh
 
 # Install OpenShift/Kubernetes CLI tools from pre-downloaded cache
-RUN --mount=type=bind,source=offline-repo/openshift,target=/tmp/offline/openshift,relabel=shared,readonly \
+RUN --mount=type=bind,source=offline-repo/openshift,target=/tmp/offline/openshift,readonly \
     OPENSHIFT_DIR="/tmp/offline/openshift" && \
     INSTALL_DIR="/usr/local/bin/bootc" && \
     echo "Installing OpenShift/Kubernetes tools from cache..." && \
@@ -1022,7 +1038,7 @@ RUN INSTALL_DIR="/usr/local/bin/bootc" && \
     fi
 
 # Install helm from offline cache (if available)
-RUN --mount=type=bind,source=offline-repo/helm,target=/tmp/offline/helm,relabel=shared,readonly \
+RUN --mount=type=bind,source=offline-repo/helm,target=/tmp/offline/helm,readonly \
     if [ -f "/tmp/offline/helm/helm" ]; then \
         echo "Installing helm from offline cache..."; \
         install -m 0755 /tmp/offline/helm/helm /usr/local/bin/helm && \
@@ -1033,7 +1049,7 @@ RUN --mount=type=bind,source=offline-repo/helm,target=/tmp/offline/helm,relabel=
     fi
 
 # Stage k3s binary and air-gap images for offline installs
-RUN --mount=type=bind,source=offline-repo/k3s,target=/tmp/offline/k3s,relabel=shared,readonly \
+RUN --mount=type=bind,source=offline-repo/k3s,target=/tmp/offline/k3s,readonly \
     INSTALL_DIR="/usr/local/bin" && \
     if [ -f "/tmp/offline/k3s/k3s" ]; then \
         echo "Installing k3s binary from offline cache..."; \
@@ -1146,7 +1162,7 @@ Usage: bootc-post-install.sh [options] [user...]
 
 Users (optional): if provided, VS Code extensions install only for those users. Defaults to all local users.
 USAGE
-}
+
 
 if [[ $EUID -ne 0 ]]; then
     echo "Error: This script must be run as root (use: sudo /usr/local/bin/bootc/bootc-post-install.sh)"
@@ -1722,6 +1738,74 @@ if (( RUN_BASE )); then
         echo "  No offline Lutris runners found at /opt/lutris-runners"
         echo "  Users can download runners directly from Lutris GUI or run:"
         echo "    lutris --runner=dw-proton --runner=dxvk --runner=vkd3d-proton"
+    fi
+
+    next_step "Setting up Rations offline cache..."
+    if [[ -d /opt/rations ]]; then
+        local rations_user_choice=""
+        local rations_target_users=()
+        
+        if [[ -t 0 ]]; then
+            read -r -p "  Setup Rations offline cache for a specific user? (y/n) [n]: " rations_user_choice
+            rations_user_choice="${rations_user_choice,,}"
+            
+            if [[ "$rations_user_choice" == "y" || "$rations_user_choice" == "yes" ]]; then
+                read -r -p "  Enter username for Rations setup: " rations_target_user
+                if getent passwd "$rations_target_user" >/dev/null 2>&1; then
+                    rations_target_users=("$rations_target_user")
+                    echo "  Setting up Rations cache for specified user: $rations_target_user"
+                else
+                    echo "    Warning: user '$rations_target_user' not found, skipping Rations setup"
+                fi
+            else
+                mapfile -t rations_target_users < <(getent passwd | awk -F: '$3 >= 1000 && $7 !~ /(nologin|false|sync|halt|shutdown)$/ && $6 ~ /^\// {print $1}')
+                echo "  Found ${#rations_target_users[@]} users for Rations setup: ${rations_target_users[*]}"
+            fi
+        else
+            # Non-interactive mode: default to all users
+            mapfile -t rations_target_users < <(getent passwd | awk -F: '$3 >= 1000 && $7 !~ /(nologin|false|sync|halt|shutdown)$/ && $6 ~ /^\// {print $1}')
+            echo "  Non-interactive mode: setting up for all users (${#rations_target_users[@]} users)"
+        fi
+        
+        for U in "${rations_target_users[@]}"; do
+            HOME_DIR=$(getent passwd "$U" | awk -F: '{print $6}')
+            if [[ -z "$HOME_DIR" ]] || [[ ! -d "$HOME_DIR" ]]; then
+                echo "    Warning: home directory not found for user $U, skipping"
+                continue
+            fi
+            
+            # Move .minecraft if it exists in /opt/rations
+            if [[ -d /opt/rations/.minecraft ]]; then
+                MINECRAFT_TARGET="$HOME_DIR/.minecraft"
+                if [[ ! -e "$MINECRAFT_TARGET" ]]; then
+                    cp -r /opt/rations/.minecraft "$MINECRAFT_TARGET" 2>/dev/null || true
+                    chown -R "$U:$U" "$MINECRAFT_TARGET" 2>/dev/null || true
+                    echo "    Copied .minecraft for user $U"
+                else
+                    echo "    .minecraft already exists for user $U, skipping"
+                fi
+            fi
+            
+            # Move .cache if it exists in /opt/rations
+            if [[ -d /opt/rations/.cache ]]; then
+                CACHE_TARGET="$HOME_DIR/.cache"
+                if [[ ! -e "$CACHE_TARGET" ]]; then
+                    cp -r /opt/rations/.cache "$CACHE_TARGET" 2>/dev/null || true
+                    chown -R "$U:$U" "$CACHE_TARGET" 2>/dev/null || true
+                    echo "    Copied .cache for user $U"
+                else
+                    echo "    .cache already exists for user $U, skipping"
+                fi
+            fi
+        done
+        
+        if [[ ${#rations_target_users[@]} -eq 0 ]]; then
+            echo "  No users selected for Rations cache setup"
+        else
+            echo "  Rations offline cache setup complete"
+        fi
+    else
+        echo "  No Rations offline cache found at /opt/rations, skipping"
     fi
 
 else

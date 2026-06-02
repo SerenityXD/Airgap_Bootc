@@ -17,7 +17,7 @@ SCRIPT_DIR="$(get_fedora_root "${SCRIPT_PATH}")"
 OUTPUT_DIR="$(get_offline_dir "cuda" "${SCRIPT_PATH}")"
 
 # CUDA repository URLs
-FEDORA_VERSION=$(rpm -E %fedora)
+FEDORA_VERSION=44
 CUDA_REPO_URL="https://developer.download.nvidia.com/compute/cuda/repos/fedora${FEDORA_VERSION}/x86_64"
 CUDA_REPO_RPM="${CUDA_REPO_URL}/cuda-fedora${FEDORA_VERSION}.repo"
 
@@ -27,7 +27,7 @@ echo "CUDA Repository Setup:"
 echo "  • This script requires NVIDIA CUDA repository to be configured"
 echo "  • Option 1: Run with sudo: sudo ./fetch_cuda_toolkit.sh"
 echo "  • Option 2: Setup once (sudoless), then run without sudo:"
-echo "      sudo dnf install -y https://developer.download.nvidia.com/compute/cuda/repos/fedora${FEDORA_VERSION}/x86_64/${CUDA_REPO_URL}/cuda-fedora${FEDORA_VERSION}.repo"
+echo "      sudo dnf config-manager addrepo --from-repofile=https://developer.download.nvidia.com/compute/cuda/repos/fedora${FEDORA_VERSION}/cuda-fedora${FEDORA_VERSION}.repo"
 echo "      ./fetch_cuda_toolkit.sh"
 echo "  • See ../README.md for more details"
 echo ""
@@ -49,7 +49,7 @@ echo "Step 1: Downloading CUDA repository configuration..."
 echo ""
 
 # Download the .repo configuration file
-REPO_CONF_PATH="${OUTPUT_DIR}/cuda-fedora${FEDORA_VERSION}.repo"
+REPO_CONF_PATH="$OUTPUT_DIR/$(basename "$CUDA_REPO_RPM")"
 
 if curl -fsSL --retry 3 --retry-delay 2 -o "$REPO_CONF_PATH" "$CUDA_REPO_RPM" 2>/dev/null; then
     log_info "Downloaded CUDA repo configuration: $(basename "$REPO_CONF_PATH")"
@@ -170,7 +170,7 @@ else
     echo "To fix this, try:"
     echo "  1. Run with sudo: sudo ./fetch_cuda_toolkit.sh"
     echo "  2. Or manually install CUDA repo first:"
-    echo "     sudo dnf install -y ${CUDA_REPO_RPM}"
+    echo "     sudo dnf config-manager addrepo --from-repofile=https://developer.download.nvidia.com/compute/cuda/repos/fedora${FEDORA_VERSION}/cuda-fedora${FEDORA_VERSION}.repo"
     echo "     then run this script again"
     echo ""
     echo "For air-gapped builds without CUDA packages:"

@@ -237,8 +237,29 @@ prune-podman:
 	@podman system df || true
 	@echo "Podman aggressive prune complete."
 
+.PHONY: prune-podman-sudo
+prune-podman-sudo:
+	@echo "Running podman prune with sudo (may be needed if some images/volumes are owned by root)..."
+	sudo podman system df || true
+	sudo podman system prune -a -f --volumes
+	sudo podman image prune -a -f
+	sudo podman builder prune -a -f
+	@echo "Removing untagged intermediate images (<none>:<none>) with sudo..."
+	@UNTAGGED_IDS="$$(sudo podman images --format '{{.Repository}}:{{.Tag}} {{.ID}}' | awk '$$1=="<none>:<none>"{print $$2}' | sort -u)"; \
+	if [ -n "$$UNTAGGED_IDS" ]; then \
+		echo "Found $$(printf '%s\n' "$$UNTAGGED_IDS" | wc -l) untagged images"; \
+		printf '%s\n' "$$UNTAGGED_IDS" | xargs -r sudo podman rmi -f; \
+	else \
+		echo "No untagged images found"; \
+	fi
+	sudo podman system prune --external -f || true
+	sudo podman volume prune -f
+	@echo "After cleanup:"
+	@sudo podman system df || true
+	@echo "Podman prune with sudo complete."
+
 .PHONY: clean-all
-clean-all: prune-podman clean-iso
+clean-all: prune-podman-sudo prune-podman clean-iso
 	@echo "Full cleanup complete."
 
 # ---------------------------------------------------------------------------

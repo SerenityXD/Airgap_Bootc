@@ -25,7 +25,7 @@ make build-iso ISO_NAME=BOOTC-Custom.iso
 ## Prerequisites
 
 - Linux host (Fedora/RHEL recommended)
-- `podman`, `bash`, `make`, `curl`, `git`, `unzip`, `wget`, `tar`, `xz`
+- `podman`, `bash`, `make`, `curl`, `git`, `unzip`, `wget`, `tar`, `xz`, `rpm`, `npm`
 - `dnf` for installing host tools
 - sudo access
 - ~70 GB free disk space
@@ -48,10 +48,18 @@ If you encounter Podman or systemd issues under WSL2, use a native Linux host wh
 On Fedora/RHEL and WSL2 Fedora:
 
 ```bash
-sudo dnf install -y podman curl make bash git unzip wget tar xz rpm
+sudo dnf install -y podman curl make bash git unzip wget tar xz rpm npm
 ```
 
-If you want to generate offline npm tarballs locally, install Node.js and npm.
+If you need third-party RPM packages, enable the required RPM repositories before running the install command.
+
+For example, to enable Fedora's RPM Fusion free and nonfree repositories:
+
+```bash
+sudo dnf install -y dnf-plugins-core
+sudo dnf install -y https://download1.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm \
+  https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm
+```
 
 If Podman is not available in your distribution, install it from the distro package repositories or follow the Podman installation guide for your platform.
 

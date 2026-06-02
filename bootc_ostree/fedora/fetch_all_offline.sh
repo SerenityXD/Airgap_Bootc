@@ -33,6 +33,10 @@ echo "  - Lutris runners (Dw Proton, DXVK, VKD3D-Proton, Proton-GE)"
 
 echo ""
 
+# Target Fedora version for all offline fetch scripts
+FEDORA_VERSION="44"
+export FEDORA_VERSION
+
 # Track what succeeded/failed
 FAILED=()
 SUCCEEDED=()

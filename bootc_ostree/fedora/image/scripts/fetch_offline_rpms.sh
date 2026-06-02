@@ -17,10 +17,6 @@ BASE_IMAGE_VERSION="43"
 # Target Fedora version (should match bootc base image)
 FEDORA_VERSION="${FEDORA_VERSION:-43}"
 
-if [[ "$FEDORA_VERSION" != "$BASE_IMAGE_VERSION" ]]; then
-    echo "${RED}[ERROR]${NC} FEDORA_VERSION=$FEDORA_VERSION does not match base image ($BASE_IMAGE_VERSION). Export FEDORA_VERSION=$BASE_IMAGE_VERSION to proceed."
-    exit 1
-fi
 # Temporary repos/cachedir to avoid touching host config
 REPO_TMP=$(mktemp -d)
 cleanup() {

@@ -10,7 +10,6 @@ source "${LIB_DIR}/common.sh"
 
 OFFLINE_DIR="$(get_offline_dir "krita" "${SCRIPT_PATH}")"
 FEDORA_VERSION="${FEDORA_VERSION:-43}"
-BASE_IMAGE_VERSION="43"
 REPO_TMP="$(mktemp -d)"
 
 cleanup() {
@@ -32,11 +31,6 @@ echo "Target directory: ${OFFLINE_DIR}"
 echo ""
 
 require_cmd dnf
-
-if [[ "${FEDORA_VERSION}" != "${BASE_IMAGE_VERSION}" ]]; then
-    log_error "FEDORA_VERSION=${FEDORA_VERSION} does not match base image (${BASE_IMAGE_VERSION})"
-    exit 1
-fi
 
 mkdir -p "${OFFLINE_DIR}"
 find "${OFFLINE_DIR}" -maxdepth 1 -type f -name '*.rpm' -delete

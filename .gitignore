@@ -73,6 +73,7 @@ bootc_ostree/fedora/oci-image/
 bootc_ostree/fedora/image/offline-repo/**
 
 
+bootc_ostree/fedora/image/scripts/CUDA_REPO_RPM
 
 # Allow directory markers
 .gitkeep
