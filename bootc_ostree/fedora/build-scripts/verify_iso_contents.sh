@@ -259,6 +259,9 @@ HOST_HAS_HELM=$([[ -f "$OFFLINE_REPO/helm/helm" ]] && echo yes || echo no)
 HOST_HAS_K3S_BIN=$([[ -f "$OFFLINE_REPO/k3s/k3s" ]] && echo yes || echo no)
 HOST_HAS_WINEHQ_RPM=$([[ $(count_files "$OFFLINE_REPO/winehq" -name '*.rpm') -gt 0 ]] && echo yes || echo no)
 HOST_HAS_FFMPEG_RPM=$([[ $(count_files "$OFFLINE_REPO/rpmfusion" -name 'ffmpeg*.rpm') -gt 0 ]] && echo yes || echo no)
+HOST_HAS_VLC_PLUGINS_FREEWORLD_RPM=$([[ $(count_files "$OFFLINE_REPO/rpmfusion" -name 'vlc-plugins-freeworld*.rpm') -gt 0 ]] && echo yes || echo no)
+HOST_HAS_CLAUDE_BIN=$([[ -f "$OFFLINE_REPO/claude/claude" || -f "$OFFLINE_REPO/claude/claude-code" ]] && echo yes || echo no)
+HOST_HAS_CLAUDE_SYSTEM_BIN=$([[ -f "/opt/claude/claude" ]] && echo yes || echo no)
 HOST_HAS_RATIONS_ZIP=$([[ -f "$OFFLINE_REPO/rations/rations.zip" ]] && echo yes || echo no)
 HOST_HAS_PORTABLEMC_BIN=$([[ -f "$OFFLINE_REPO/rations/portablemc" ]] && echo yes || echo no)
 HOST_HAS_RATIONS_META_A=$([[ -f "$OFFLINE_REPO/rations/8d52f11f50b848c491fb17b27bff394ff6ffbd16" ]] && echo yes || echo no)
@@ -363,6 +366,8 @@ printf 'has_obs=%s\n' "$(bool_cmd obs)"
 printf 'has_ffmpeg=%s\n' "$(bool_cmd ffmpeg)"
 printf 'has_mpv=%s\n' "$(bool_cmd mpv)"
 printf 'has_vlc=%s\n' "$(bool_cmd vlc)"
+printf 'has_vlc_plugins_freeworld=%s\n' "$(bool_rpm vlc-plugins-freeworld)"
+printf 'has_claude_system_bin=%s\n' "$(bool_path /opt/claude/claude)"
 
 printf 'has_oc=%s\n' "$(bool_path /usr/local/bin/bootc/oc)"
 printf 'has_oc_path=%s\n' "$(bool_cmd oc)"
@@ -598,6 +603,22 @@ fi
 
 if [[ "$HOST_HAS_VLC_RPM" == yes ]]; then
   expect_yes has_vlc "vlc is available in PATH"
+fi
+
+if [[ "$HOST_HAS_VLC_PLUGINS_FREEWORLD_RPM" == yes ]]; then
+  expect_yes has_vlc_plugins_freeworld "vlc-plugins-freeworld is installed"
+elif [[ "${INVENTORY[has_vlc_plugins_freeworld]:-no}" == yes ]]; then
+  pass "vlc-plugins-freeworld is installed"
+else
+  warn "vlc-plugins-freeworld is not installed"
+fi
+
+if [[ "$HOST_HAS_CLAUDE_BIN" == yes ]]; then
+  expect_yes has_claude_system_bin "Claude Code CLI binary is present at /opt/claude/claude"
+elif [[ "${INVENTORY[has_claude_system_bin]:-no}" == yes ]]; then
+  pass "Claude Code CLI binary is present at /opt/claude/claude"
+else
+  warn "Claude Code CLI binary is not present at /opt/claude/claude"
 fi
 
 compare_count "$HOST_VSIX_COUNT" "${INVENTORY[vsix_count]:-0}" "VS Code extension"

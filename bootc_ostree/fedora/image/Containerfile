@@ -13,6 +13,7 @@ ARG EXCLUDE_DOCKER_DESKTOP=no
 ARG EXCLUDE_GIMP_KRITA=no
 ARG EXCLUDE_RATIONS=no
 ARG EXCLUDE_CUDA_TOOLKIT=no
+ARG EXCLUDE_NPM_TARBALLS=no
 
 # System metadata
 LABEL name="BOOTC Bootc Workstation"
@@ -86,10 +87,16 @@ RUN echo "Installing GNOME desktop environment" && \
     python3-pip python3-devel \
     git fastfetch \
     network-manager-applet \
+    cronie at bash-completion \
     kernel-devel kernel-modules-extra \
     power-profiles-daemon \
     ntpdate \
     traceroute \
+    # Display + Vulkan
+    xrandr vulkan vulkan-tools vulkan-loader \ 
+    # NVIDIA VA-API + VDPAU
+    libva-nvidia-driver libva-utils vdpauinfo \
+    htop \
     # Audio stack (Intel firmware + PipeWire ALSA/PulseAudio bridges)
     intel-audio-firmware \
     alsa-sof-firmware \
@@ -436,7 +443,6 @@ RUN if [ "$EXCLUDE_BLENDER" != "yes" ]; then \
 
 # Install OBS Studio and multimedia codecs (offline preferred, online fallback)
 RUN --mount=type=bind,source=offline-repo/obs,target=/tmp/offline/obs,readonly \
-    --mount=type=bind,source=offline-repo/rpmfusion,target=/tmp/offline/rpmfusion,readonly \
     install_from_local_rpm_repo() { \
         local repo_id="$1"; \
         local repo_dir="$2"; \
@@ -504,43 +510,18 @@ RUN --mount=type=bind,source=offline-repo/obs,target=/tmp/offline/obs,readonly \
         else \
             echo "Warning: curated OBS offline install failed, falling back to online repos"; \
         fi; \
-    elif compgen -G "/tmp/offline/rpmfusion/*.rpm" >/dev/null; then \
-        echo "Attempting curated RPM Fusion install from offline repo..."; \
-        if install_from_local_rpm_repo rpmfusion-local /tmp/offline/rpmfusion \
-            'ffmpeg-[0-9]*.x86_64.rpm' \
-            'ffmpeg-libs-[0-9]*.x86_64.rpm' \
-            'mpv-[0-9]*.x86_64.rpm' \
-            'vlc-[0-9]*.x86_64.rpm' \
-            'x264-*.x86_64.rpm' \
-            'x265-*.x86_64.rpm' \
-            'lame-[0-9]*.x86_64.rpm' \
-            'gstreamer1-plugins-bad-free-extras-[0-9]*.x86_64.rpm' \
-            'gstreamer1-plugins-ugly-[0-9]*.x86_64.rpm' \
-            'gstreamer1-libav-[0-9]*.x86_64.rpm' \
-            'libavcodec-freeworld-[0-9]*.x86_64.rpm' \
-            'libavformat-freeworld-[0-9]*.x86_64.rpm' \
-            'libavutil-freeworld-[0-9]*.x86_64.rpm' \
-            'libswscale-freeworld-[0-9]*.x86_64.rpm' \
-            'libswresample-freeworld-[0-9]*.x86_64.rpm'; then \
-            offline_installed=1; \
-            echo "RPM Fusion multimedia packages installed from curated offline packages"; \
-        else \
-            echo "Warning: curated RPM Fusion offline install failed, falling back to online repos"; \
-        fi; \
-    fi; \
-    if [ "$offline_installed" -ne 1 ]; then \
-        echo "Offline OBS/RPM Fusion packages not usable, attempting online install..."; \
-        dnf -y --setopt=install_weak_deps=False install \
-            https://download1.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm \
-            https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm || true; \
-        dnf -y --setopt=install_weak_deps=False swap --allowerasing ffmpeg-free ffmpeg || true; \
-        dnf -y --setopt=install_weak_deps=False install --best --skip-broken ffmpeg vlc obs-studio \
-            gstreamer1-plugins-bad-free-extras gstreamer1-plugins-ugly \
-            gstreamer1-plugin-openh264 gstreamer1-libav lame x264 x265 \
-            --allowerasing || true; \
     fi && \
+    echo "Installing VLC from online repositories"; \
+    dnf -y --setopt=install_weak_deps=False install \
+        https://download1.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm \
+        https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm || true; \
+    dnf -y --setopt=install_weak_deps=False install --best --skip-broken vlc vlc-plugins-freeworld --allowerasing || true; \
     dnf -y clean all && rm -rf /var/cache/dnf && \
     dnf -y remove createrepo_c >/dev/null 2>&1 || true && \
+    dnf -y clean all && rm -rf /var/cache/dnf
+
+# Gonna have to redo multimedia codecs to avoid dependency hell with RPM Fusion and Fedora updates. For now, this works.
+RUN dnf install -y vlc vlc-plugins-all ffmpeg ffmpeg-libs --allowerasing && \
     dnf -y clean all && rm -rf /var/cache/dnf
 
 # Install NVIDIA drivers from RPM Fusion
@@ -560,6 +541,8 @@ RUN dnf -y --setopt=install_weak_deps=False install --best \
     xorg-x11-drv-nvidia-power \
         xorg-x11-drv-nvidia-cuda \
         xorg-x11-drv-nvidia-cuda-libs \
+        xorg-x11-drv-nvidia-libs \
+        xorg-x11-drv-nvidia-libs.i686 \
         nvidia-settings \
         nvidia-persistenced && \
     dnf -y clean all && rm -rf /var/cache/dnf
@@ -694,18 +677,11 @@ RUN --mount=type=bind,source=offline-repo/vscode,target=/tmp/offline/vscode,read
     command -v code >/dev/null 2>&1 || { echo "ERROR: VS Code was not installed — place an RPM in offline-repo/vscode/ or ensure network access during build"; exit 1; } && \
     dnf -y clean all && rm -rf /var/cache/dnf
 
-# Install WineHQ (offline preferred, online fallback)
-RUN --mount=type=bind,source=offline-repo/winehq,target=/tmp/offline/winehq,readonly \
-    if [ -n "$(find /tmp/offline/winehq -maxdepth 1 -type f -name '*.rpm' ! -name '*.src.rpm' 2>/dev/null)" ]; then \
-        echo "Installing WineHQ from offline repo..."; \
-        find /tmp/offline/winehq -maxdepth 1 -type f -name '*.src.rpm' -print | sed 's/^/  Skipping source RPM: /' || true; \
-        find /tmp/offline/winehq -maxdepth 1 -type f -name '*.rpm' ! -name '*.src.rpm' -print0 | xargs -0r dnf -y install || true; \
-    else \
-        echo "Offline WineHQ packages not found, attempting online install..."; \
-        dnf -y install dnf-plugins-core || true; \
-        dnf config-manager --add-repo https://dl.winehq.org/wine-builds/fedora/$(rpm -E %fedora)/winehq.repo || true; \
-        dnf -y install winehq-stable || true; \
-    fi && \
+# Install WineHQ
+RUN echo "Installing WineHQ from official WineHQ repository..." && \
+    dnf -y install dnf-plugins-core 'dnf5-command(config-manager)' || true; \
+    dnf config-manager addrepo --from-repofile=https://dl.winehq.org/wine-builds/fedora/$(rpm -E %fedora)/winehq.repo || true; \
+    dnf -y install winehq-stable || true; \
     dnf -y clean all && rm -rf /var/cache/dnf
 
 # Install Lutris separately using Fedora online repositories
@@ -754,39 +730,13 @@ RUN --mount=type=bind,source=offline-repo/lutris-runners,target=/tmp/offline/lut
     fi && \
     dnf -y clean all && rm -rf /var/cache/dnf
 
-# Install helper script for managing Lutris runners
-RUN mkdir -p /usr/local/bin/bootc && \
-    printf '%s\n' \
-        '#!/usr/bin/env bash' \
-        '# Helper script to set up Lutris runners from offline artifacts' \
-        'set -euo pipefail' \
-        '' \
-        'RUNNERS_DIR="/opt/lutris-runners"' \
-        'LUTRIS_RUNNERS_DIR="${HOME}/.local/share/lutris/runners"' \
-        '' \
-        'if [ ! -d "$RUNNERS_DIR" ]; then' \
-        '    echo "No offline Lutris runners found at $RUNNERS_DIR"' \
-        '    echo "Use Lutris GUI to download runners, or run: lutris --runner=<name>"' \
-        '    exit 0' \
-        'fi' \
-        '' \
-        'mkdir -p "$LUTRIS_RUNNERS_DIR"' \
-        '' \
-        'echo "Linking Lutris runners from $RUNNERS_DIR..."' \
-        'for runner in "$RUNNERS_DIR"/*; do' \
-        '    if [ -d "$runner" ]; then' \
-        '        runner_name=$(basename "$runner")' \
-        '        target="$LUTRIS_RUNNERS_DIR/$runner_name"' \
-        '        if [ ! -e "$target" ]; then' \
-        '            ln -s "$runner" "$target"' \
-        '            echo "  Linked: $runner_name"' \
-        '        fi' \
-        '    fi' \
-        'done' \
-        '' \
-        'echo "Lutris runners setup complete."' \
-        > /usr/local/bin/bootc/setup-lutris-runners.sh && \
-    chmod 0755 /usr/local/bin/bootc/setup-lutris-runners.sh
+# Prepare Lutris runners for user accounts (link from /opt/lutris-runners to $HOME/.local/share/lutris/runners and $HOME/.local/share/lutris/runtime)
+RUN mkdir -p /etc/skel/.local/share/lutris/runners && \
+    mkdir -p /etc/skel/.local/share/lutris/runtime && \
+    ln -s /opt/lutris-runners/dw-proton* /etc/skel/.local/share/lutris/runners/ 2>/dev/null || true && \
+    ln -s /opt/lutris-runners/dxvk* /etc/skel/.local/share/lutris/runtime/ 2>/dev/null || true && \
+    ln -s /opt/lutris-runners/vkd3d-proton* /etc/skel/.local/share/lutris/runtime/ 2>/dev/null || true && \
+    ln -s /opt/lutris-runners/proton-ge* /etc/skel/.local/share/lutris/runners/ 2>/dev/null || true
 
 # Install Docker Desktop - OPTIONAL (404MB offline package)
 # To exclude, use: podman build --build-arg EXCLUDE_DOCKER_DESKTOP=yes
@@ -865,30 +815,35 @@ COPY BOOTC-README.md /usr/local/bin/bootc/BOOTC-README.md
 
 # Create JavaScript frameworks installer
 # Prefer pre-cached npm tarballs (if provided by offline repo)
-COPY offline-repo/npm-packages/ /opt/npm-packages/
-
-# Create offline npm cache and install JS frameworks from cache
-RUN mkdir -p /opt/npm-packages && \
-    set -eux; \
-    # If we already have cached tarballs (from offline-repo), prefer them and skip network operations
-    if ls /opt/npm-packages/*.tgz >/dev/null 2>&1; then \
-        echo "Using cached npm tarballs in /opt/npm-packages"; \
+# To exclude npm tarballs from the image, use: podman build --build-arg EXCLUDE_NPM_TARBALLS=yes
+RUN --mount=type=bind,source=offline-repo/npm-packages,target=/tmp/offline/npm-packages,readonly \
+    if [ "$EXCLUDE_NPM_TARBALLS" != "yes" ]; then \
+        mkdir -p /opt/npm-packages && \
+        cp -a /tmp/offline/npm-packages/. /opt/npm-packages/ && \
+        set -eux; \
+        # If we already have cached tarballs (from offline-repo), prefer them and skip network operations
+        if ls /opt/npm-packages/*.tgz >/dev/null 2>&1; then \
+            echo "Using cached npm tarballs in /opt/npm-packages"; \
+        else \
+            echo "No cached npm tarballs found; attempting to fetch and pack (requires network)"; \
+            # Avoid writing to /root during build (some build environments make /root non-writable or non-dir)
+            export HOME=/tmp && mkdir -p /tmp/.npm && npm config set cache /tmp/.npm --global || true; \
+            for pkg in create-react-app @vue/cli @angular/cli create-next-app vite webpack webpack-cli typescript ts-node jest mocha eslint prettier pnpm; do \
+                echo "Packing $pkg"; \
+                npm pack "$pkg" --pack-destination /opt/npm-packages || echo "Warning: npm pack failed for $pkg"; \
+            done; \
+        fi; \
+        if ls /opt/npm-packages/*.tgz >/dev/null 2>&1; then \
+            echo "Installing JS frameworks from offline cache..."; \
+            # Ensure npm uses /tmp (some build envs make /root a file or non-writable) and set cache to /tmp/.npm
+            export HOME=/tmp && mkdir -p /tmp/.npm && npm config set cache /tmp/.npm --global || true; \
+            npm install -g --cache /tmp/.npm /opt/npm-packages/*.tgz || echo "Warning: npm install -g from cache failed"; \
+        else \
+            echo "No npm packages were cached; skipping global install"; \
+        fi; \
     else \
-        echo "No cached npm tarballs found; attempting to fetch and pack (requires network)"; \
-        # Avoid writing to /root during build (some build environments make /root non-writable or non-dir)
-        export HOME=/tmp && mkdir -p /tmp/.npm && npm config set cache /tmp/.npm --global || true; \
-        for pkg in create-react-app @vue/cli @angular/cli create-next-app vite webpack webpack-cli typescript ts-node jest mocha eslint prettier pnpm; do \
-            echo "Packing $pkg"; \
-            npm pack "$pkg" --pack-destination /opt/npm-packages || echo "Warning: npm pack failed for $pkg"; \
-        done; \
-    fi; \
-    if ls /opt/npm-packages/*.tgz >/dev/null 2>&1; then \
-        echo "Installing JS frameworks from offline cache..."; \
-        # Ensure npm uses /tmp (some build envs make /root a file or non-writable) and set cache to /tmp/.npm
-        export HOME=/tmp && mkdir -p /tmp/.npm && npm config set cache /tmp/.npm --global || true; \
-        npm install -g --cache /tmp/.npm /opt/npm-packages/*.tgz || echo "Warning: npm install -g from cache failed"; \
-    else \
-        echo "No npm packages were cached; skipping global install"; \
+        rm -rf /opt/npm-packages && \
+        echo "Skipping npm tarball inclusion (set --build-arg EXCLUDE_NPM_TARBALLS=yes to exclude)"; \
     fi
 
 # Create JavaScript frameworks verifier (checks cache and installed binaries)
@@ -1036,6 +991,10 @@ RUN INSTALL_DIR="/usr/local/bin/bootc" && \
         ln -sf "$INSTALL_DIR/kubectl" /usr/local/bin/k && \
         echo "✓ Symlinked kubectl to /usr/local/bin/kubectl and /usr/local/bin/k"; \
     fi
+
+# Stage Claude Code CLI offline artifacts for post-install use
+COPY offline-repo/claude/ /opt/claude/
+RUN chmod 0755 /opt/claude/claude 2>/dev/null || true
 
 # Install helm from offline cache (if available)
 RUN --mount=type=bind,source=offline-repo/helm,target=/tmp/offline/helm,readonly \
@@ -1575,6 +1534,29 @@ enable_podman_socket_for_user() {
         echo "  Note: Podman user socket setup failed for $U; run after login: systemctl --user enable --now podman.socket"
 }
 
+install_claude_cli() {
+    local SOURCE_DIR="/opt/claude"
+    local INSTALL_DIR="/usr/local/bin/bootc"
+
+    if [ ! -d "$SOURCE_DIR" ]; then
+        echo "  Claude Code offline artifacts not found; skipping"
+        return 0
+    fi
+
+    echo "Installing Claude Code CLI from offline artifacts..."
+    if [ -f "$SOURCE_DIR/claude" ]; then
+        "$SOURCE_DIR/claude" install
+        echo "  ✓ Claude Code CLI installed"
+        "$INSTALL_DIR/claude" --version 2>/dev/null || true
+    elif [ -f "$SOURCE_DIR/claude-code" ]; then
+        "$SOURCE_DIR/claude-code" install
+        echo "  ✓ Claude Code CLI installed"
+        "$INSTALL_DIR/claude" --version 2>/dev/null || true
+    else
+        echo "  ⚠ Claude Code CLI artifact not found in $SOURCE_DIR"
+    fi
+}
+
 
 if (( RUN_BASE )); then
     next_step "Creating bootc user..."
@@ -1602,6 +1584,9 @@ if (( RUN_BASE )); then
     else
         echo "  Skipping VS Code extensions (disabled by flag)"
     fi
+
+    next_step "Installing Claude Code CLI..."
+    install_claude_cli
 
     next_step "Copying README to user desktops..."
     if (( RUN_README )); then
@@ -1709,36 +1694,6 @@ if (( RUN_BASE )); then
         [ -d "$HOME_DIR" ] || continue
         ensure_k3s_kubeconfig_for_user "$U" "$HOME_DIR"
     done
-
-    next_step "Setting up Lutris runners..."
-    if [[ -d /opt/lutris-runners ]]; then
-        mapfile -t USERS < <(getent passwd | awk -F: '$3 >= 1000 && $7 !~ /(nologin|false|sync|halt|shutdown)$/ && $6 ~ /^\// {print $1}')
-        echo "  Found ${#USERS[@]} users: ${USERS[*]}"
-        for U in "${USERS[@]}"; do
-            HOME_DIR=$(getent passwd "$U" | awk -F: '{print $6}')
-            [ -d "$HOME_DIR" ] || continue
-            LUTRIS_RUNNERS_DIR="$HOME_DIR/.local/share/lutris/runners"
-            mkdir -p "$LUTRIS_RUNNERS_DIR"
-            
-            # Symlink runners from /opt/lutris-runners if not already present
-            for runner in /opt/lutris-runners/*; do
-                if [[ -d "$runner" ]]; then
-                    runner_name=$(basename "$runner")
-                    target="$LUTRIS_RUNNERS_DIR/$runner_name"
-                    if [[ ! -e "$target" ]]; then
-                        ln -s "$runner" "$target" 2>/dev/null || true
-                        echo "    Linked $runner_name for user $U"
-                    fi
-                fi
-            done
-            chown -R "$U:$U" "$HOME_DIR/.local" 2>/dev/null || true
-        done
-        echo "  Lutris runners setup complete"
-    else
-        echo "  No offline Lutris runners found at /opt/lutris-runners"
-        echo "  Users can download runners directly from Lutris GUI or run:"
-        echo "    lutris --runner=dw-proton --runner=dxvk --runner=vkd3d-proton"
-    fi
 
     next_step "Setting up Rations offline cache..."
     if [[ -d /opt/rations ]]; then

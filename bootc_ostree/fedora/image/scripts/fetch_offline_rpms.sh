@@ -15,7 +15,7 @@ ARCH="$(uname -m)"
 BASE_IMAGE_VERSION="43"
 
 # Target Fedora version (should match bootc base image)
-FEDORA_VERSION="${FEDORA_VERSION:-43}"
+FEDORA_VERSION="${FEDORA_VERSION:-44}"
 
 # Temporary repos/cachedir to avoid touching host config
 REPO_TMP=$(mktemp -d)
@@ -36,7 +36,7 @@ usage() {
     cat <<EOF
 Usage: $(basename "$0") [OPTIONS]
 
-Fetch offline RPMs for third-party packages (VS Code, WineHQ, Docker Desktop)
+Fetch offline RPMs for third-party packages (VS Code, Docker Desktop)
 
 RPM Fusion packages are intentionally excluded from --all and installed online during
 the container build. Use --rpmfusion only if you need to explicitly pre-cache them.
@@ -45,7 +45,6 @@ Options:
   --all                 Fetch all packages except RPM Fusion (default)
   --rpmfusion          Fetch RPM Fusion packages only (advanced; usually not needed)
   --vscode             Fetch VS Code only
-  --winehq             Fetch WineHQ packages only
   --docker-desktop     Fetch Docker Desktop only
   --skip-existing      Skip downloads if files already exist
   -h, --help           Show this help
@@ -66,9 +65,7 @@ EOF
 
 # Parse arguments
 FETCH_ALL=true
-FETCH_RPMFUSION=false
 FETCH_VSCODE=false
-FETCH_WINEHQ=false
 FETCH_DOCKER=false
 SKIP_EXISTING=false
 
@@ -77,7 +74,6 @@ while [[ $# -gt 0 ]]; do
         --all) FETCH_ALL=true; shift ;;
         --rpmfusion) FETCH_ALL=false; FETCH_RPMFUSION=true; shift ;;
         --vscode) FETCH_ALL=false; FETCH_VSCODE=true; shift ;;
-        --winehq) FETCH_ALL=false; FETCH_WINEHQ=true; shift ;;
         --docker-desktop) FETCH_ALL=false; FETCH_DOCKER=true; shift ;;
         --skip-existing) SKIP_EXISTING=true; shift ;;
         -h|--help) usage; exit 0 ;;
@@ -88,12 +84,11 @@ done
 # Apply --all logic (RPM Fusion excluded: installed online during container build)
 if [[ "$FETCH_ALL" == "true" ]]; then
     FETCH_VSCODE=true
-    FETCH_WINEHQ=true
     FETCH_DOCKER=true
 fi
 
 # Create directories
-mkdir -p "$OFFLINE_REPO_DIR"/{rpmfusion,vscode,winehq,docker-desktop}
+mkdir -p "$OFFLINE_REPO_DIR"/{vscode,docker-desktop}
 
 # Check for required tools
 for cmd in dnf curl wget; do
@@ -102,51 +97,6 @@ for cmd in dnf curl wget; do
         exit 1
     fi
 done
-
-#=============================================================================
-# RPM Fusion
-#=============================================================================
-fetch_rpmfusion() {
-    log_info "Fetching RPM Fusion packages..."
-    
-    local target_dir="$OFFLINE_REPO_DIR/rpmfusion"
-    
-    if [[ "$SKIP_EXISTING" == "true" && -n "$(ls "$target_dir"/*.rpm 2>/dev/null)" ]]; then
-        log_warn "RPM Fusion packages already exist, skipping."
-        return
-    fi
-    
-    local rpmfusion_free="https://download1.rpmfusion.org/free/fedora/releases/${FEDORA_VERSION}/Everything/${ARCH}/os"
-    local rpmfusion_nonfree="https://download1.rpmfusion.org/nonfree/fedora/releases/${FEDORA_VERSION}/Everything/${ARCH}/os"
-
-    mkdir -p "${REPO_TMP}/repos"
-    cd "$target_dir"
-    dnf download \
-        "${DNF_BASE_OPTS[@]}" \
-        --setopt=reposdir="${REPO_TMP}/repos" \
-        --repofrompath=rpmfusion-free,${rpmfusion_free} \
-        --repofrompath=rpmfusion-nonfree,${rpmfusion_nonfree} \
-        --enablerepo=rpmfusion-free --enablerepo=rpmfusion-nonfree \
-        --exclude=ffmpeg-free \
-        --skip-unavailable \
-        ffmpeg ffmpeg-libs \
-        mpv vlc \
-        x264 x265 \
-        lame \
-        gstreamer1-plugins-bad-free-extras \
-        gstreamer1-plugins-ugly \
-        gstreamer1-libav \
-        libavcodec-freeworld \
-        libavformat-freeworld \
-        libavutil-freeworld \
-        libswscale-freeworld \
-        libswresample-freeworld \
-        || log_warn "Some RPM Fusion packages failed to download"
-    
-    log_info "Note: obs-studio will be installed from online repos due to Qt6 dependency conflicts"
-    
-    log_info "RPM Fusion packages saved to: $target_dir"
-}
 
 #=============================================================================
 # VS Code
@@ -175,44 +125,6 @@ fetch_vscode() {
         || log_error "Failed to download VS Code"
     
     log_info "VS Code saved to: $target_dir"
-}
-
-#=============================================================================
-# WineHQ
-#=============================================================================
-fetch_winehq() {
-    log_info "Fetching WineHQ packages..."
-    
-    local target_dir="$OFFLINE_REPO_DIR/winehq"
-    
-    if [[ "$SKIP_EXISTING" == "true" && -n "$(ls "$target_dir"/*.rpm 2>/dev/null)" ]]; then
-        log_warn "WineHQ packages already exist, skipping."
-        return
-    fi
-    
-    local wine_repo="https://dl.winehq.org/wine-builds/fedora/${FEDORA_VERSION}/"
-
-    mkdir -p "${REPO_TMP}/repos"
-    cd "$target_dir"
-
-    # Download without --resolve to avoid conflicts with host-installed wine-desktop
-    # The container build will install these packages in isolation
-    dnf download \
-        "${DNF_BASE_OPTS[@]}" \
-        --setopt=reposdir="${REPO_TMP}/repos" \
-        --repofrompath=winehq,${wine_repo} \
-        --enablerepo=winehq \
-        wine-stable \
-        winehq-stable \
-        || log_warn "Failed to download WineHQ packages. This may be due to repository access issues or conflicts with your host system."
-
-    # Source RPMs are not installable in the image transaction and can cause dnf failures.
-    if compgen -G "${target_dir}/*.src.rpm" >/dev/null; then
-        log_warn "Removing WineHQ source RPMs from offline cache (binary RPMs are kept)."
-        rm -f "${target_dir}"/*.src.rpm
-    fi
-    
-    log_info "WineHQ packages saved to: $target_dir"
 }
 
 #=============================================================================
@@ -259,15 +171,13 @@ fetch_docker_desktop() {
 log_info "Starting offline RPM fetch..."
 log_info "Target directory: $OFFLINE_REPO_DIR"
 
-[[ "$FETCH_RPMFUSION" == "true" ]] && fetch_rpmfusion
 [[ "$FETCH_VSCODE" == "true" ]] && fetch_vscode
-[[ "$FETCH_WINEHQ" == "true" ]] && fetch_winehq
 [[ "$FETCH_DOCKER" == "true" ]] && fetch_docker_desktop
 
 log_info "Offline RPM fetch complete!"
 log_info ""
 log_info "Summary of downloaded packages:"
-for dir in rpmfusion vscode winehq docker-desktop; do
+for dir in vscode docker-desktop; do
     count=$(find "$OFFLINE_REPO_DIR/$dir" -name "*.rpm" 2>/dev/null | wc -l)
     size=$(du -sh "$OFFLINE_REPO_DIR/$dir" 2>/dev/null | awk '{print $1}')
     printf "  %-20s %3d RPMs  (%s)\n" "$dir:" "$count" "$size"

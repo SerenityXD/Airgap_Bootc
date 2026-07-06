@@ -16,6 +16,7 @@ WALLPAPER_REPO_URL=https://github.com/GNOME/gnome-backgrounds.git WALLPAPER_REPO
 
 ## Artifact Locations
 - RPMs and binaries: `bootc_ostree/fedora/image/offline-repo/<vendor>/`
+- Claude Code CLI: `bootc_ostree/fedora/image/offline-repo/claude/` (place the binary as `claude` or `claude-code`)
 - VS Code extensions: `bootc_ostree/fedora/image/offline-repo/vscode-extensions/`
 - npm tarballs: `bootc_ostree/fedora/image/offline-repo/npm-packages/`
 - Wallpapers: `bootc_ostree/fedora/image/offline-repo/wallpapers/`
