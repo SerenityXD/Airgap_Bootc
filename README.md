@@ -24,7 +24,7 @@ make build-iso ISO_NAME=BOOTC-Custom.iso
 
 ## Prerequisites
 
-- Linux host (Fedora/RHEL recommended)
+- Fedora/RHEL based Linux Distribution
 - `podman`, `bash`, `make`, `curl`, `git`, `unzip`, `wget`, `tar`, `xz`, `rpm`, `npm`
 - `dnf` for installing host tools
 - sudo access
