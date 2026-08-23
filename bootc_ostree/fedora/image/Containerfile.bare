@@ -2,7 +2,7 @@
 # Bare bootc system image for two-step deployment
 # Includes: GNOME desktop baseline, Podman, bootc switch workflow helpers
 
-FROM quay.io/fedora/fedora-bootc:44
+FROM quay.io/fedora/fedora-bootc:43
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -294,6 +294,7 @@ RUN systemctl enable gdm || true && \
     if systemctl list-unit-files | grep -q '^switcheroo-control\.service'; then systemctl enable switcheroo-control.service || true; fi && \
     if systemctl list-unit-files | grep -q '^nvidia-powerd\.service'; then systemctl enable nvidia-powerd.service || true; fi && \
     systemctl set-default graphical.target || true && \
+    ln -sf /usr/lib/systemd/system/graphical.target /etc/systemd/system/default.target && \
     dracut -f --regenerate-all || true
 
 RUN echo 'BOOTC Bare' > /etc/hostname && \

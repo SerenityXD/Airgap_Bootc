@@ -17,7 +17,7 @@ SCRIPT_DIR="$(get_fedora_root "${SCRIPT_PATH}")"
 OUTPUT_DIR="$(get_offline_dir "cuda" "${SCRIPT_PATH}")"
 
 # CUDA repository URLs
-FEDORA_VERSION=44
+FEDORA_VERSION="${FEDORA_VERSION:-44}"
 CUDA_REPO_URL="https://developer.download.nvidia.com/compute/cuda/repos/fedora${FEDORA_VERSION}/x86_64"
 CUDA_REPO_RPM="${CUDA_REPO_URL}/cuda-fedora${FEDORA_VERSION}.repo"
 

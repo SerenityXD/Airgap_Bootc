@@ -15,7 +15,7 @@ ARCH="$(uname -m)"
 BASE_IMAGE_VERSION="43"
 
 # Target Fedora version (should match bootc base image)
-FEDORA_VERSION="${FEDORA_VERSION:-44}"
+FEDORA_VERSION="${FEDORA_VERSION:-43}"
 
 # Temporary repos/cachedir to avoid touching host config
 REPO_TMP=$(mktemp -d)

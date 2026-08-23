@@ -7,6 +7,8 @@
 
 set -e
 
+FEDORA_VERSION="${FEDORA_VERSION:-43}"
+
 SCRIPT_PATH="${BASH_SOURCE[0]}"
 LIB_DIR="$(cd "$(dirname "${SCRIPT_PATH}")/lib" && pwd)"
 # shellcheck source=lib/common.sh
@@ -33,8 +35,8 @@ if ! dnf repolist 2>/dev/null | grep -q rpmfusion; then
     echo ""
         cat <<'EOF'
     sudo dnf install -y \
-        https://download1.rpmfusion.org/free/fedora/rpmfusion-free-release$(rpm -E %fedora).noarch.rpm \
-        https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release$(rpm -E %fedora).noarch.rpm
+        https://download1.rpmfusion.org/free/fedora/rpmfusion-free-release${FEDORA_VERSION}.noarch.rpm \
+        https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release${FEDORA_VERSION}.noarch.rpm
 EOF
     echo ""
     exit 1
