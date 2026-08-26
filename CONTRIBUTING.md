@@ -9,9 +9,11 @@ Welcome! This guide will help you understand the repository structure, common wo
 ├── bootc_ostree/fedora/           # Main build orchestration
 │   ├── image/                     # Container image definition
 │   │   ├── Containerfile          # Main image build (1000+ lines)
-│   │   ├── offline-repo/          # Vendor offline artifacts (RPMs, binaries, etc)
-│   │   ├── scripts/               # Fetch scripts for individual tools
-│   │   └── gnome-extensions/      # Custom GNOME extensions
+│   │   ├── config/                # Build-time configuration inputs
+│   │   ├── assets/                # Custom image assets
+│   │   ├── docs/                  # Documentation copied into the image
+│   │   └── offline-repo/          # Vendor offline artifacts (RPMs, binaries, etc)
+│   ├── fetch-scripts/             # Fetch scripts for individual tools
 │   ├── build-scripts/             # ISO and export orchestration
 │   │   ├── build_export_iso.sh    # Main build entry point
 │   │   ├── verify_iso_contents.sh # Post-build verification
@@ -71,7 +73,7 @@ Welcome! This guide will help you understand the repository structure, common wo
 
 ### Adding a New Offline Artifact
 
-1. **Create a fetch script** in `bootc_ostree/fedora/image/scripts/`:
+1. **Create a fetch script** in `bootc_ostree/fedora/fetch-scripts/`:
    ```bash
    #!/usr/bin/env bash
    set -euo pipefail
@@ -106,8 +108,8 @@ Welcome! This guide will help you understand the repository structure, common wo
 
 4. **Test locally:**
    ```bash
-   chmod +x bootc_ostree/fedora/image/scripts/fetch_mytool.sh
-   ./bootc_ostree/fedora/image/scripts/fetch_mytool.sh
+   chmod +x bootc_ostree/fedora/fetch-scripts/fetch_mytool.sh
+   ./bootc_ostree/fedora/fetch-scripts/fetch_mytool.sh
    ls bootc_ostree/fedora/image/offline-repo/mytool/
    ```
 
@@ -158,7 +160,7 @@ Available build arguments (see Containerfile for full list):
 
 ### Adding Python Packages (Offline)
 
-1. **Update the package list** in `bootc_ostree/fedora/image/scripts/package-versions.txt`:
+1. **Update the package list** in `bootc_ostree/fedora/fetch-scripts/package-versions.txt`:
    ```
    numpy==1.24.0
    pandas@2.0.0
@@ -167,7 +169,7 @@ Available build arguments (see Containerfile for full list):
 
 2. **Generate tarballs:**
    ```bash
-   ./bootc_ostree/fedora/image/scripts/create-npm-tarballs.sh
+   ./bootc_ostree/fedora/fetch-scripts/create-npm-tarballs.sh
    ```
 
 3. **Commit generated `.tgz` files** to the repository.

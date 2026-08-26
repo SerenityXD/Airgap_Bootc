@@ -139,7 +139,7 @@ This section tracks suggested improvements identified through code review and ma
   - Structured logging (same as image scripts)
   - Path resolution helpers
   - File download utilities
-- [ ] Mirror utilities available in `image/scripts/lib/common.sh`
+- [ ] Mirror utilities available in `fetch-scripts/lib/common.sh`
 - **Benefit**: Reduced code duplication, consistent patterns
 - **Effort**: 1.5 hours
 

@@ -58,7 +58,7 @@
 5. Unmute master channel if needed: `amixer sset Master unmute && amixer sset Speaker unmute`
 6. Test playback: `speaker-test -t wav -c 2 -l 1`
 
-**Note:** The image ships `alsa-sof-firmware`, `alsa-ucm-conf`, `pipewire-alsa`, `wireplumber`, and `alsa-utils` for Tiger Lake SOF DSP support. If audio still fails, check BIOS audio settings (ensure onboard audio is enabled).
+**Note:** The image ships `alsa-sof-firmware`, `alsa-ucm`, `pipewire-alsa`, `wireplumber`, and `alsa-utils` for Tiger Lake SOF DSP support. If audio still fails, check BIOS audio settings (ensure onboard audio is enabled).
 
 ### NVIDIA lock/sleep screen — missing icons after wake
 **Symptom:** OS icons are missing or the lock screen appears blank after resuming from suspend/sleep

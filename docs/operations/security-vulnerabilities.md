@@ -320,7 +320,7 @@ Users should:
 **Description:**  
 A CA certificate file is copied from the build context and trusted system-wide:
 ```dockerfile
-COPY ca-bundle.crt /etc/pki/ca-trust/source/anchors/bootc-local-ca.crt
+COPY config/ca-bundle.crt /etc/pki/ca-trust/source/anchors/bootc-local-ca.crt
 RUN update-ca-trust
 ```
 
@@ -333,7 +333,7 @@ No fingerprint validation is performed. The build process trusts that the correc
 Pin the expected SHA-256 fingerprint as a build assertion:
 
 ```dockerfile
-COPY ca-bundle.crt /etc/pki/ca-trust/source/anchors/bootc-local-ca.crt
+COPY config/ca-bundle.crt /etc/pki/ca-trust/source/anchors/bootc-local-ca.crt
 
 # Build-time assertion: verify the CA fingerprint matches expected value
 RUN EXPECTED_FP="sha256:3f8a4ff0e27ecc6e0a2f0b1c2d3e4f5a..." && \

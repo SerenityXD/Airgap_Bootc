@@ -2,8 +2,6 @@
 
 This repository builds an air-gapped Fedora installer ISO and a matching OCI image using a prebuilt Bootc container image.
 
-> The repo is focused on offline-first delivery: it stages vendor RPMs, binaries, VS Code extensions, wallpapers, and JavaScript framework archives so the image can be built without network access.
-
 ## Quick start
 
 From the repository root:
@@ -29,19 +27,6 @@ make build-iso ISO_NAME=BOOTC-Custom.iso
 - `dnf` for installing host tools
 - sudo access
 - ~70 GB free disk space
-
-## Experimental WSL2 support
-
-WSL2 is supported experimentally. The build should work from a WSL2 Linux distribution, but Windows host integration and Podman/systemd behavior can vary.
-
-Requirements for WSL2:
-
-- Windows 11/10 with WSL2 enabled
-- A Linux distro installed in WSL2
-- Podman installed inside the WSL2 distro
-- A compatible filesystem with enough free space for the build
-
-If you encounter Podman or systemd issues under WSL2, use a native Linux host when possible.
 
 ## Install prerequisites
 
@@ -104,20 +89,20 @@ make fetch-bare-full-verify
 The build uses staged payloads in:
 
 - `bootc_ostree/fedora/image/offline-repo/`
-- `bootc_ostree/fedora/image/offline-repo/vscode-extensions/`
-- `bootc_ostree/fedora/image/offline-repo/npm-packages/`
 
 The following directories must exist before the build runs:
 
 - `bootc_ostree/fedora/image/offline-repo/rations/`
 - `bootc_ostree/fedora/image/offline-repo/wallpapers/`
 
+Use this link to get the relevant base files: https://pixeldrain.com/u/SRewN6nn
+
 `rations/` and `wallpapers/` can be empty, but they must be present for the Containerfile copy steps.
 
 ## Build notes
 
 - The image is built offline when possible and prefers staged artifacts from `bootc_ostree/fedora/image/offline-repo/`.
-- Optional packages such as Blender, GIMP/Krita, Docker Desktop, Rations/Minecraft, and CUDA are enabled by default.
+- Optional packages such as Blender, GIMP/Krita, Docker Desktop, Rations, and CUDA are enabled by default.
 - Use `EXTRA_BUILD_ARGS` to customize build behavior when needed.
 
 ## Verification
@@ -139,8 +124,8 @@ This target finds the latest generated ISO and OCI archive, then validates that 
 ## More documentation
 
 - Canonical Fedora build guide: `bootc_ostree/fedora/README.md`
-- Image packaging and runtime notes: `bootc_ostree/fedora/image/BOOTC-README.md`
-- Bare-image runtime notes: `bootc_ostree/fedora/image/BOOTC-README-bare.md`
+- Image packaging and runtime notes: `bootc_ostree/fedora/image/docs/BOOTC-README.md`
+- Bare-image runtime notes: `bootc_ostree/fedora/image/docs/BOOTC-README-bare.md`
 - Project architecture: `docs/README.md`
 
 ## Output locations

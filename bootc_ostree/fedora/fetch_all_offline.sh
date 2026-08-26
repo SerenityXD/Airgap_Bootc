@@ -5,7 +5,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-FETCH_SCRIPTS_DIR="${SCRIPT_DIR}/image/scripts"
+FETCH_SCRIPTS_DIR="${SCRIPT_DIR}/fetch-scripts"
 
 echo "========================================"
 echo "Fetch All Offline Packages"
@@ -15,7 +15,7 @@ echo "⚠️  NOTE: CUDA Toolkit requires NVIDIA repository setup"
 echo "   For sudoless setup, run once:"
 echo "     sudo dnf install -y https://developer.download.nvidia.com/compute/cuda/repos/fedora43/x86_64/cuda-fedora43.repo"
 echo "   Then run this script normally."
-echo "   See image/scripts/README.md for alternatives."
+echo "   See fetch-scripts/README.md for alternatives."
 echo ""
 echo "This script will download:"
 echo "  - VS Code (via dedicated fetch script)"
@@ -29,7 +29,7 @@ echo "  - CUDA Toolkit and associated packages (NVIDIA CUDA)"
 echo "  - OpenShift/Kubernetes CLI tools (oc, kubectl)"
 echo "  - Helm package manager"
 echo "  - k3s binary and offline images (air-gap image archive)"
-echo "  - Lutris runners (Dw Proton, DXVK, VKD3D-Proton, Proton-GE)"
+# echo "  - Lutris runners (Dw Proton, DXVK, VKD3D-Proton, Proton-GE)"
 
 echo ""
 
@@ -92,7 +92,7 @@ FETCH_TASKS=(
     "fetch_helm.sh|Helm Package Manager|"
     "fetch_k3s_binary.sh|k3s Binary|"
     "fetch_k3s_images.sh|k3s offline images|"
-    "fetch_lutris_runners.sh|Lutris Runners (Dw Proton, DXVK, VKD3D, Proton-GE)|"
+    # "fetch_lutris_runners.sh|Lutris Runners (Dw Proton, DXVK, VKD3D, Proton-GE)|"
 )
 
 for task in "${FETCH_TASKS[@]}"; do

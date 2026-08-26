@@ -11,17 +11,17 @@ This document describes optimizations made to reduce the BOOTC Bootc Workstation
 **Problem:** The offline-repo had 968 duplicate RPM files (381 unique packages) across different vendor folders (obs/, krita/, gimp/, rpmfusion/).
 
 **Solution:** 
-- Created deduplication script: `bootc_ostree/fedora/image/scripts/deduplicate-offline-repo.sh`
+- Created deduplication script: `bootc_ostree/fedora/fetch-scripts/deduplicate-offline-repo.sh`
 - Consolidates duplicates into a shared folder
 - Can be run before ISO build
 
 **Usage:**
 ```bash
 # Dry-run (preview what would be removed)
-DRY_RUN=true ./bootc_ostree/fedora/image/scripts/deduplicate-offline-repo.sh
+DRY_RUN=true ./bootc_ostree/fedora/fetch-scripts/deduplicate-offline-repo.sh
 
 # Apply deduplication
-./bootc_ostree/fedora/image/scripts/deduplicate-offline-repo.sh
+./bootc_ostree/fedora/fetch-scripts/deduplicate-offline-repo.sh
 ```
 
 ### 2. **Optional Package Build Arguments** (~1-2 GB savings)
@@ -122,7 +122,7 @@ podman build --format docker \
 
 1. Run deduplication:
 ```bash
-cd bootc_ostree/fedora/image/scripts
+cd bootc_ostree/fedora/fetch-scripts
 ./deduplicate-offline-repo.sh
 ```
 
@@ -168,7 +168,7 @@ sudo dnf install blender          # From Fedora repos
 
 ### Deduplication Script
 
-Located at: `bootc_ostree/fedora/image/scripts/deduplicate-offline-repo.sh`
+Located at: `bootc_ostree/fedora/fetch-scripts/deduplicate-offline-repo.sh`
 
 **How it works:**
 1. Scans all RPM files in offline-repo

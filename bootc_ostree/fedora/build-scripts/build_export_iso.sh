@@ -300,7 +300,7 @@ fi
 
 # 0) Fetch offline packages (optional)
 if [[ "$FETCH_OFFLINE" == "true" ]]; then
-  FETCH_SCRIPT="$ROOT_DIR/image/scripts/fetch_offline_rpms.sh"
+  FETCH_SCRIPT="$ROOT_DIR/fetch-scripts/fetch_offline_rpms.sh"
   if [[ ! -x "$FETCH_SCRIPT" ]]; then
     echo "[0/4] Error: fetch_offline_rpms.sh not found or not executable at $FETCH_SCRIPT" >&2
     exit 1

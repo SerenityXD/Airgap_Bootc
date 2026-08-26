@@ -2,7 +2,7 @@
 # Bare bootc system image for two-step deployment
 # Includes: GNOME desktop baseline, Podman, bootc switch workflow helpers
 
-FROM quay.io/fedora/fedora-bootc:43
+FROM quay.io/fedora/fedora-bootc:44
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -50,7 +50,7 @@ RUN mkdir -p /usr/local/bin/bootc /usr/lib/systemd/system && \
         'WantedBy=multi-user.target' \
         > /usr/lib/systemd/system/ntpdate-sync.service
 
-COPY ca-bundle.crt /etc/pki/ca-trust/source/anchors/bootc-local-ca.crt
+COPY config/ca-bundle.crt /etc/pki/ca-trust/source/anchors/bootc-local-ca.crt
 RUN update-ca-trust
 
 RUN sed -i '/^tsflags/ d' /etc/dnf/dnf.conf && echo 'tsflags=nodocs' >> /etc/dnf/dnf.conf && \
@@ -282,7 +282,7 @@ RUN mkdir -p /etc/avahi/services && \
 </service-group>
 EOF
 
-COPY BOOTC-README-bare.md /usr/local/bin/bootc/BOOTC-README.md
+COPY docs/BOOTC-README-bare.md /usr/local/bin/bootc/BOOTC-README.md
 
 RUN mkdir -p /etc/skel/Desktop && \
     cp /usr/local/bin/bootc/BOOTC-README.md /etc/skel/BOOTC-README.md && \

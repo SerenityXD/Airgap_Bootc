@@ -31,7 +31,7 @@ Options:
   --dry-run       Show what would be downloaded without actually downloading
   -h, --help      Show this help message
 
-Downloads will be placed in ./offline-repo/lutris-runners/
+Downloads will be placed in ../image/offline-repo/lutris-runners/
 USAGE
     exit 0
 fi

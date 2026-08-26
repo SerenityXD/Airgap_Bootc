@@ -34,12 +34,12 @@ require_cmd() {
     fi
 }
 
-# Given a script path under bootc_ostree/fedora/image/scripts, resolve bootc_ostree/fedora.
+# Given a script path under bootc_ostree/fedora/fetch-scripts, resolve bootc_ostree/fedora.
 get_fedora_root() {
     local source_file="${1:-${BASH_SOURCE[1]}}"
     local source_dir
     source_dir="$(cd "$(dirname "$source_file")" && pwd)"
-    cd "$source_dir/../../" && pwd
+    cd "$source_dir/../" && pwd
 }
 
 get_offline_dir() {

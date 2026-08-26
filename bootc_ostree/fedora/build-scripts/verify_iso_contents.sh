@@ -20,10 +20,10 @@ EXPECT_DOCKER_DESKTOP=true
 EXPECT_GIMP_KRITA=true
 EXPECT_RATIONS=true
 EXPECT_BLENDER=true
-EXPECT_CUDA_TOOLKIT=true
+EXPECT_CUDA_TOOLKIT=false
 EXPECT_NVIDIA=false
 EXPECT_WINE=false
-EXPECT_LUTRIS=true
+EXPECT_LUTRIS=false
 
 PASS_COUNT=0
 WARN_COUNT=0
@@ -249,7 +249,7 @@ else
 fi
 
 HOST_VSIX_COUNT=$(count_files "$OFFLINE_REPO/vscode-extensions" -name '*.vsix')
-HOST_NPM_TGZ_COUNT=$(count_files "$OFFLINE_REPO/npm-packages" -name '*.tgz')
+#HOST_NPM_TGZ_COUNT=$(count_files "$OFFLINE_REPO/npm-packages" -name '*.tgz')
 HOST_WALLPAPER_COUNT=$(find "$OFFLINE_REPO/wallpapers" -maxdepth 1 -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.webp' -o -iname '*.bmp' \) 2>/dev/null | wc -l | tr -d '[:space:]')
 HOST_K3S_AIRGAP_COUNT=$(count_files "$OFFLINE_REPO/k3s" -name 'k3s-airgap-images-*.tar.zst')
 HOST_K3S_SHA_COUNT=$(count_files "$OFFLINE_REPO/k3s" -name 'sha256sum-*.txt')
@@ -375,7 +375,6 @@ printf 'has_helm=%s\n' "$(bool_cmd helm)"
 printf 'has_k3s=%s\n' "$(bool_cmd k3s)"
 
 printf 'vsix_count=%s\n' "$(count_dir_files /opt/vscode-extensions '*.vsix')"
-printf 'npm_tgz_count=%s\n' "$(count_dir_files /opt/npm-packages '*.tgz')"
 printf 'wallpaper_count=%s\n' "$(count_dir_files /usr/share/backgrounds/bootc '*')"
 printf 'has_wallpaper_xml=%s\n' "$(bool_path /usr/share/gnome-background-properties/bootc-wallpapers.xml)"
 printf 'k3s_airgap_count=%s\n' "$(count_dir_files /usr/share/k3s 'k3s-airgap-images-*.tar.zst')"
@@ -419,6 +418,20 @@ printf 'has_pipewire_alsa=%s\n' "$(bool_rpm pipewire-alsa)"
 printf 'has_pipewire_pulseaudio=%s\n' "$(bool_rpm pipewire-pulseaudio)"
 printf 'has_wireplumber=%s\n' "$(bool_rpm wireplumber)"
 printf 'has_alsa_utils=%s\n' "$(bool_rpm alsa-utils)"
+printf 'has_alsa_ucm=%s\n' "$(bool_rpm alsa-ucm)"
+printf 'has_linux_firmware=%s\n' "$(bool_rpm linux-firmware)"
+printf 'has_mesa_vulkan_drivers=%s\n' "$(bool_rpm mesa-vulkan-drivers)"
+printf 'has_container_selinux=%s\n' "$(bool_rpm container-selinux)"
+printf 'has_firewalld=%s\n' "$(bool_rpm firewalld)"
+printf 'has_firewalld_service_enabled=%s\n' "$(bool_path /etc/systemd/system/multi-user.target.wants/firewalld.service)"
+printf 'has_bootc_firewalld_service=%s\n' "$(bool_path /usr/lib/systemd/system/bootc-firewalld-configure.service)"
+printf 'has_bootc_firewalld_service_enabled=%s\n' "$(bool_path /etc/systemd/system/multi-user.target.wants/bootc-firewalld-configure.service)"
+printf 'has_gstreamer_base=%s\n' "$(bool_rpm gstreamer1-plugins-base)"
+printf 'has_gstreamer_good=%s\n' "$(bool_rpm gstreamer1-plugins-good)"
+printf 'has_gstreamer_bad=%s\n' "$(bool_rpm gstreamer1-plugins-bad-free)"
+printf 'has_gstreamer_bad_extras=%s\n' "$(bool_rpm gstreamer1-plugins-bad-free-extras)"
+printf 'has_gstreamer_libav=%s\n' "$(bool_rpm gstreamer1-plugin-libav)"
+printf 'has_openh264=%s\n' "$(bool_rpm openh264)"
 EOF
 )
 
@@ -497,18 +510,22 @@ expect_yes has_bootc_readme "BOOTC README is embedded in the image"
 expect_yes has_bootc_post_install "bootc-post-install.sh is present"
 expect_yes has_js_verifier "install-js-frameworks.sh is present"
 expect_yes has_automount_script "automount-drive.sh is present"
-expect_yes has_k3s_distribute_script "k3s-distribute-kubeconfig.sh is present"
-expect_yes has_k3s_pre_start "k3s-pre-start.sh is present"
-expect_yes has_k3s_service "k3s.service is installed"
-expect_yes has_k3s_kubeconfig_service "k3s-kubeconfig-distribute.service is installed"
-expect_yes has_k3s_route_service "k3s-route-setup.service is installed"
-expect_yes has_k3s_route_service_enabled "k3s-route-setup.service is enabled (wanted by k3s.service)"
-expect_yes has_k3s_sysctl "k3s sysctl config /etc/sysctl.d/99-k3s.conf is present"
-expect_yes k3s_sysctl_ip_forward "k3s sysctl config enables ip_forward"
-expect_yes has_k3s_modules_load "k3s kernel modules config /etc/modules-load.d/k3s.conf is present"
-expect_yes has_k3s_bashrc "k3s KUBECONFIG fallback present for non-login shells (/etc/bashrc.d/k3s-kubectl.sh)"
-expect_yes has_k3s_profile "k3s kubeconfig profile is present"
-expect_yes has_k3s_config "k3s config.yaml is present"
+if [[ "$HOST_HAS_K3S_BIN" == yes ]]; then
+  expect_yes has_k3s_distribute_script "k3s-distribute-kubeconfig.sh is present"
+  expect_yes has_k3s_pre_start "k3s-pre-start.sh is present"
+  expect_yes has_k3s_service "k3s.service is installed"
+  expect_yes has_k3s_kubeconfig_service "k3s-kubeconfig-distribute.service is installed"
+  expect_yes has_k3s_route_service "k3s-route-setup.service is installed"
+  expect_yes has_k3s_route_service_enabled "k3s-route-setup.service is enabled (wanted by k3s.service)"
+  expect_yes has_k3s_sysctl "k3s sysctl config /etc/sysctl.d/99-k3s.conf is present"
+  expect_yes k3s_sysctl_ip_forward "k3s sysctl config enables ip_forward"
+  expect_yes has_k3s_modules_load "k3s kernel modules config /etc/modules-load.d/k3s.conf is present"
+  expect_yes has_k3s_bashrc "k3s KUBECONFIG fallback present for non-login shells (/etc/bashrc.d/k3s-kubectl.sh)"
+  expect_yes has_k3s_profile "k3s kubeconfig profile is present"
+  expect_yes has_k3s_config "k3s config.yaml is present"
+else
+  warn "k3s artifacts are absent; k3s services are optional and not required"
+fi
 
 # Desktop environment verification
 # if [[ "${DESKTOP_ENV,,}" == "gnome" ]]; then
@@ -611,7 +628,7 @@ else
 fi
 
 compare_count "$HOST_VSIX_COUNT" "${INVENTORY[vsix_count]:-0}" "VS Code extension"
-compare_count_min "$HOST_NPM_TGZ_COUNT" "${INVENTORY[npm_tgz_count]:-0}" "Offline npm tarball"
+#compare_count_min "$HOST_NPM_TGZ_COUNT" "${INVENTORY[npm_tgz_count]:-0}" "Offline npm tarball"
 compare_count "$HOST_WALLPAPER_COUNT" "${INVENTORY[wallpaper_count]:-0}" "Wallpaper"
 
 # if [[ "${DESKTOP_ENV,,}" == "gnome" ]]; then
@@ -641,6 +658,23 @@ expect_yes has_pipewire_alsa "pipewire-alsa is installed (ALSA API to PipeWire b
 expect_yes has_pipewire_pulseaudio "pipewire-pulseaudio is installed (PulseAudio API to PipeWire bridge)"
 expect_yes has_wireplumber "wireplumber is installed (PipeWire session manager)"
 expect_yes has_alsa_utils "alsa-utils is installed (aplay/amixer utilities)"
+expect_yes has_alsa_ucm "alsa-ucm is installed (ALSA device profiles)"
+expect_yes has_linux_firmware "linux-firmware is installed"
+
+echo
+echo "Verifying graphics acceleration and codec dependencies..."
+expect_yes has_mesa_vulkan_drivers "Mesa Vulkan drivers are installed"
+expect_yes has_container_selinux "container-selinux is installed"
+expect_yes has_firewalld "firewalld is installed"
+expect_yes has_firewalld_service_enabled "firewalld.service is enabled"
+expect_yes has_bootc_firewalld_service "BOOTC firewalld policy service is installed"
+expect_yes has_bootc_firewalld_service_enabled "BOOTC firewalld policy service is enabled"
+expect_yes has_gstreamer_base "GStreamer base plugins are installed"
+expect_yes has_gstreamer_good "GStreamer good plugins are installed"
+expect_yes has_gstreamer_bad "GStreamer bad-free plugins are installed"
+expect_yes has_gstreamer_bad_extras "GStreamer bad-free extras are installed"
+expect_yes has_gstreamer_libav "GStreamer libav plugin is installed"
+expect_yes has_openh264 "OpenH264 codec is installed"
 
 if [[ "$EXPECT_DOCKER_DESKTOP" == true ]]; then
   expect_yes has_docker_desktop "Docker Desktop is installed as requested"

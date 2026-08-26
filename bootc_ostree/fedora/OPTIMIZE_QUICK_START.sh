@@ -2,7 +2,7 @@
 # Quick Reference: ISO Size Optimization Commands
 
 # 1. DEDUPLICATION (First, remove duplicate RPMs)
-cd bootc_ostree/fedora/image/scripts
+cd bootc_ostree/fedora/fetch-scripts
 echo "=== Preview deduplication ==="
 DRY_RUN=true VERBOSE=true ./deduplicate-offline-repo.sh
 
@@ -10,7 +10,7 @@ echo "=== Apply deduplication (saves 200-400MB) ==="
 ./deduplicate-offline-repo.sh
 
 # 2. BUILD MINIMAL ISO (No optional packages - fastest, smallest)
-cd ../../build-scripts
+cd ../build-scripts
 echo "=== Building minimal ISO (~8-9GB) ==="
 ./build_export_iso.sh --iso-name bootc-minimal.iso
 

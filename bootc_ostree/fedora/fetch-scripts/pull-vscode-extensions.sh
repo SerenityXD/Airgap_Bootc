@@ -56,6 +56,7 @@ EXTS=(
   "redhat.vscode-yaml"
   "ms-vscode.makefile-tools"
   "eamodio.gitlens"
+  "ms-azuretools.vscode-containers"
 )
 
 FORCE=false

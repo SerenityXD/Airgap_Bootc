@@ -4,7 +4,7 @@
 FEDORA_DIR        := bootc_ostree/fedora
 IMAGE_DIR         := $(FEDORA_DIR)/image
 BUILD_SCRIPTS_DIR := $(FEDORA_DIR)/build-scripts
-FETCH_SCRIPTS_DIR := $(IMAGE_DIR)/scripts
+FETCH_SCRIPTS_DIR := $(FEDORA_DIR)/fetch-scripts
 TESTS_DIR         := $(FEDORA_DIR)/tests
 
 FULL_IMAGE_TAG ?= localhost/bootc-full

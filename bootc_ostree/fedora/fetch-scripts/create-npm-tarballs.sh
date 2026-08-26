@@ -8,9 +8,10 @@ set -euo pipefail
 # to produce .tgz tarballs suitable for offline installation. Tarballs are
 # moved into the destination directory (default: image/offline-repo/npm-packages/).
 
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MANIFEST="$HERE/scripts/package-versions.txt"
-DEFAULT_DEST="$HERE/offline-repo/npm-packages"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+IMAGE_DIR="$(cd "$SCRIPT_DIR/../image" && pwd)"
+MANIFEST="$SCRIPT_DIR/package-versions.txt"
+DEFAULT_DEST="$IMAGE_DIR/offline-repo/npm-packages"
 DEST="${1:-$DEFAULT_DEST}"
 
 if ! command -v npm >/dev/null 2>&1; then

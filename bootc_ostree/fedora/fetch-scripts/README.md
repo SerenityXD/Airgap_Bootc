@@ -1,6 +1,6 @@
 # Offline Package Fetch Scripts
 
-This directory contains scripts for fetching software packages and binaries for offline installation in the bootc image build. All scripts follow the same patterns and output their downloads to `../offline-repo/`.
+This directory contains scripts for fetching software packages and binaries for offline installation in the bootc image build. All scripts follow the same patterns and output their downloads to `../image/offline-repo/`.
 
 ## General Usage
 
@@ -47,7 +47,7 @@ sudo dnf install -y https://developer.download.nvidia.com/compute/cuda/repos/fed
 If you cannot download CUDA packages locally (e.g., air-gapped network), you can exclude CUDA from the image build:
 
 ```bash
-podman build --build-arg EXCLUDE_CUDA_TOOLKIT=yes -t bootc-bootc -f ../Containerfile .
+podman build --build-arg EXCLUDE_CUDA_TOOLKIT=yes -t bootc-bootc -f ../image/Containerfile ../image
 ```
 
 CUDA can then be installed post-deployment on the target system if needed.
@@ -101,9 +101,9 @@ The CUDA repository is not configured. See **CUDA Toolkit** section above for se
 
 ### Permission denied
 
-If you get permission errors when writing to `../offline-repo/`, ensure the directory is writable:
+If you get permission errors when writing to `../image/offline-repo/`, ensure the directory is writable:
 
 ```bash
-ls -ld ../offline-repo/
-chmod u+w ../offline-repo/
+ls -ld ../image/offline-repo/
+chmod u+w ../image/offline-repo/
 ```

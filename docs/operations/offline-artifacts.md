@@ -6,12 +6,11 @@ Prepare third-party packages and binaries for air-gapped image builds.
 ## Canonical Commands
 ```bash
 ./bootc_ostree/fedora/fetch_all_offline.sh
-./bootc_ostree/fedora/image/scripts/fetch_gimp.sh
-./bootc_ostree/fedora/image/scripts/fetch_krita.sh
-DAVINCI_RESOLVE_URL=https://official-vendor-url ./bootc_ostree/fedora/image/scripts/fetch_davinci_resolve.sh
-UNREAL_ENGINE_URL=https://signed-vendor-url ./bootc_ostree/fedora/image/scripts/fetch_unreal_engine.sh
-./bootc_ostree/fedora/image/scripts/create-npm-tarballs.sh
-WALLPAPER_REPO_URL=https://github.com/GNOME/gnome-backgrounds.git WALLPAPER_REPO_SUBDIR=backgrounds ./bootc_ostree/fedora/image/scripts/fetch_wallpapers.sh
+./bootc_ostree/fedora/fetch-scripts/fetch_gimp.sh
+./bootc_ostree/fedora/fetch-scripts/fetch_krita.sh
+DAVINCI_RESOLVE_URL=https://official-vendor-url ./bootc_ostree/fedora/fetch-scripts/fetch_davinci_resolve.sh
+UNREAL_ENGINE_URL=https://signed-vendor-url ./bootc_ostree/fedora/fetch-scripts/fetch_unreal_engine.sh
+./bootc_ostree/fedora/fetch-scripts/create-npm-tarballs.sh
 ```
 
 ## Artifact Locations

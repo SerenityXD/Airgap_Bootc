@@ -17,7 +17,7 @@ Your BOOTC Bootc workstation ISO has been optimized to reduce size from **~12GB 
     - Blender (300 MB) - `EXCLUDE_BLENDER=yes`
 
 #### 2. **Deduplication Script**
-   - **Created:** `bootc_ostree/fedora/image/scripts/deduplicate-offline-repo.sh`
+   - **Created:** `bootc_ostree/fedora/fetch-scripts/deduplicate-offline-repo.sh`
    - Consolidates 968 duplicate RPM files across offline-repo/
    - Saves 200-400 MB without losing any packages
    - Safe to run - includes dry-run mode
@@ -49,7 +49,7 @@ Your BOOTC Bootc workstation ISO has been optimized to reduce size from **~12GB 
 ### Option A: Minimal ISO (Smallest)
 
 ```bash
-cd bootc_ostree/fedora/image/scripts
+cd bootc_ostree/fedora/fetch-scripts
 ./deduplicate-offline-repo.sh
 
 cd ../build-scripts
@@ -122,7 +122,7 @@ The optimized ISO always includes:
 
 ```bash
 # Preview what will be removed (safe, no changes)
-cd bootc_ostree/fedora/image/scripts
+cd bootc_ostree/fedora/fetch-scripts
 DRY_RUN=true ./deduplicate-offline-repo.sh
 
 # Apply deduplication (saves 200-400 MB)
@@ -137,7 +137,7 @@ du -sh ../offline-repo/*
 1. **Pick your configuration** (minimal, standard, or custom)
 2. **Run deduplication** (one-time, highly recommended):
    ```bash
-   cd bootc_ostree/fedora/image/scripts
+   cd bootc_ostree/fedora/fetch-scripts
    ./deduplicate-offline-repo.sh
    ```
 3. **Build your ISO** with desired options

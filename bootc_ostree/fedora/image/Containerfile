@@ -12,7 +12,7 @@ ARG EXCLUDE_DOCKER_DESKTOP=no
 ARG EXCLUDE_GIMP_KRITA=no
 ARG EXCLUDE_RATIONS=no
 ARG EXCLUDE_CUDA_TOOLKIT=no
-ARG EXCLUDE_NPM_TARBALLS=no
+ARG EXCLUDE_NPM_TARBALLS=yes
 
 # System metadata
 LABEL name="BOOTC Bootc Workstation"
@@ -63,7 +63,7 @@ RUN mkdir -p /usr/local/bin/bootc /usr/lib/systemd/system && \
         > /usr/lib/systemd/system/ntpdate-sync.service
 
 # Trust the bundled enterprise CA
-COPY ca-bundle.crt /etc/pki/ca-trust/source/anchors/bootc-local-ca.crt
+COPY config/ca-bundle.crt /etc/pki/ca-trust/source/anchors/bootc-local-ca.crt
 RUN update-ca-trust
 
 # Minimize dnf footprint and locales
@@ -81,6 +81,7 @@ RUN echo "Installing GNOME desktop environment" && \
     # Display server
     xorg-x11-server-Xorg \
     mesa-dri-drivers \
+    mesa-vulkan-drivers \
     # Additional tools
     make gcc gcc-c++ cmake automake autoconf \
     python3-pip python3-devel \
@@ -92,9 +93,10 @@ RUN echo "Installing GNOME desktop environment" && \
     ntpdate \
     traceroute \
     # Display + Vulkan
-    xrandr vulkan vulkan-tools vulkan-loader \ 
+    xrandr vulkan vulkan-tools vulkan-loader \
     # NVIDIA VA-API + VDPAU
     libva-nvidia-driver libva-utils vdpauinfo \
+    linux-firmware \
     htop \
     # Audio stack (Intel firmware + PipeWire ALSA/PulseAudio bridges)
     intel-audio-firmware \
@@ -103,9 +105,11 @@ RUN echo "Installing GNOME desktop environment" && \
     pipewire-alsa \
     pipewire-pulseaudio \
     wireplumber \
+    alsa-ucm \
     alsa-utils \
     # Container tools
-    slirp4netns conntrack-tools bridge-utils fuse-overlayfs podman \
+    slirp4netns conntrack-tools bridge-utils fuse-overlayfs podman container-selinux \
+    firewalld \
     # Remote desktop
     xrdp xorgxrdp \
     # Windows network discovery and file sharing
@@ -116,7 +120,25 @@ RUN echo "Installing GNOME desktop environment" && \
     gvfs-smb \
     # Additional archive tools
     ark unrar \
+    # Multimedia plugin and codec runtime support
+    gstreamer1 \
+    gstreamer1-plugins-base \
+    gstreamer1-plugins-good \
+    gstreamer1-plugins-bad-free \
+    gstreamer1-plugins-bad-free-extras \
+    gstreamer1-plugin-libav \
+    openh264 mozilla-openh264 \
+    container-selinux \
     && dnf -y clean all && rm -rf /var/cache/dnf
+
+# Confirm that the explicit driver and media dependencies expose their expected
+# diagnostic tools during the image build.
+RUN for command_name in firewall-cmd gst-inspect-1.0 vainfo vdpauinfo vulkaninfo; do \
+        command -v "$command_name" >/dev/null 2>&1 || { \
+            echo "ERROR: required runtime command is missing: $command_name" >&2; \
+            exit 1; \
+        }; \
+    done
 
 # Enable network discovery services and time synchronization
 RUN systemctl enable ntpdate-sync.service && \
@@ -313,7 +335,7 @@ RUN --mount=type=bind,source=offline-repo/wallpapers,target=/tmp/offline/wallpap
 #     `gnome-extensions enable` which *appends* to the user's extension list.
 #     This is the reliable path for users whose dconf user-db already has an
 #     enabled-extensions entry (overrides the system-db default).
-RUN --mount=type=bind,source=gnome-extensions/screen-watermark@bootc.local,target=/tmp/gnome-ext/screen-watermark@bootc.local,readonly \
+RUN --mount=type=bind,source=assets/gnome-extensions/screen-watermark@bootc.local,target=/tmp/gnome-ext/screen-watermark@bootc.local,readonly \
     mkdir -p /usr/share/gnome-shell/extensions && \
     cp -a /tmp/gnome-ext/screen-watermark@bootc.local /usr/share/gnome-shell/extensions/screen-watermark@bootc.local && \
     mkdir -p /etc/dconf/db/local.d /etc/xdg/autostart && \
@@ -498,7 +520,7 @@ RUN --mount=type=bind,source=offline-repo/obs,target=/tmp/offline/obs,readonly \
             'lame-[0-9]*.x86_64.rpm' \
             'gstreamer1-plugins-bad-free-extras-[0-9]*.x86_64.rpm' \
             'gstreamer1-plugins-ugly-[0-9]*.x86_64.rpm' \
-            'gstreamer1-libav-[0-9]*.x86_64.rpm' \
+            'gstreamer1-plugin-libav-[0-9]*.x86_64.rpm' \
             'libavcodec-freeworld-[0-9]*.x86_64.rpm' \
             'libavformat-freeworld-[0-9]*.x86_64.rpm' \
             'libavutil-freeworld-[0-9]*.x86_64.rpm' \
@@ -581,7 +603,6 @@ RUN if [ -f /usr/sbin/akmods ]; then \
                     'options nvidia_drm fbdev=1' \
                     'options nvidia NVreg_PreserveVideoMemoryAllocations=1' \
                     'options nvidia NVreg_TemporaryFilePath=/var/tmp' \
-                    'options nvidia NVreg_EnableGpuFirmware=0' \
                     > /etc/modprobe.d/nvidia-pm.conf; \
                 echo "Regenerating initramfs for all kernels with NVIDIA modules..."; \
                 dracut -f --regenerate-all && echo "Initramfs regeneration complete for all kernels" || \
@@ -609,6 +630,63 @@ RUN mkdir -p /etc/modprobe.d /etc/dracut.conf.d && \
         'rootdelay="20"' \
         'rd.timeout="120"' \
         > /etc/dracut.conf.d/10-bootc-usb-reliability.conf
+
+# Configure firewalld at boot after the active network zone is known. The
+# default zone is intentionally preserved; administrators can assign LAN
+# interfaces to a more restrictive zone after deployment.
+RUN mkdir -p /usr/local/bin/bootc /usr/lib/systemd/system && \
+    cat > /usr/local/bin/bootc/firewalld-configure.sh <<'FIREWALLEOF'
+#!/bin/bash
+set -euo pipefail
+
+for attempt in $(seq 1 30); do
+    if firewall-cmd --state >/dev/null 2>&1; then
+        break
+    fi
+    sleep 1
+done
+
+firewall-cmd --state >/dev/null 2>&1 || {
+    echo "firewalld is not ready; leaving firewall policy unchanged"
+    exit 1
+}
+
+ZONE=$(firewall-cmd --get-default-zone)
+
+for service in mdns samba; do
+    firewall-cmd --permanent --zone="$ZONE" --add-service="$service" >/dev/null
+done
+
+for port in \
+    3389/tcp \
+    3702/tcp 3702/udp \
+    5357/tcp \
+    6443/tcp \
+    8472/udp \
+    10250/tcp; do
+    firewall-cmd --permanent --zone="$ZONE" --add-port="$port" >/dev/null
+done
+
+firewall-cmd --reload >/dev/null
+echo "firewalld policy applied to default zone: $ZONE"
+FIREWALLEOF
+RUN chmod 0755 /usr/local/bin/bootc/firewalld-configure.sh
+
+RUN cat > /usr/lib/systemd/system/bootc-firewalld-configure.service <<'UNITEOF'
+[Unit]
+Description=Configure BOOTC firewall policy
+After=firewalld.service network-online.target
+Wants=network-online.target
+Requires=firewalld.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/bootc/firewalld-configure.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+UNITEOF
 
 # Install CUDA Toolkit - OPTIONAL (adds ~1GB)
 # To exclude, use: podman build --build-arg EXCLUDE_CUDA_TOOLKIT=yes
@@ -683,59 +761,59 @@ RUN echo "Installing WineHQ from official WineHQ repository..." && \
     dnf -y install winehq-stable || true; \
     dnf -y clean all && rm -rf /var/cache/dnf
 
-# Install Lutris separately using Fedora online repositories
-RUN echo "Installing Lutris from Fedora repositories..." && \
-    dnf -y --setopt=install_weak_deps=False install lutris || true && \
-    dnf -y clean all && rm -rf /var/cache/dnf
+# Install Lutris separately using Fedora online repositories (Read below)
+# RUN echo "Installing Lutris from Fedora repositories..." && \
+#     dnf -y --setopt=install_weak_deps=False install lutris || true && \
+#     dnf -y clean all && rm -rf /var/cache/dnf
 
-# Install Lutris Runners (Dw Proton, DXVK, VKD3D-Proton, Proton-GE) from offline repo
-RUN --mount=type=bind,source=offline-repo/lutris-runners,target=/tmp/offline/lutris-runners,readonly \
-    echo "Setting up Lutris runners (Dw Proton, DXVK, VKD3D-Proton, Proton-GE)..." && \
-    mkdir -p /opt/lutris-runners && \
-    RUNNERS_DIR="/opt/lutris-runners" && \
-    if [ -n "$(find /tmp/offline/lutris-runners -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.zip' \) 2>/dev/null)" ]; then \
-        echo "  Installing runners from offline repo..."; \
-        for runner_file in /tmp/offline/lutris-runners/*.tar.gz; do \
-            if [ -f "$runner_file" ]; then \
-                runner_name=$(basename "$runner_file" .tar.gz); \
-                echo "    Extracting: $runner_name"; \
-                tar -xzf "$runner_file" -C "$RUNNERS_DIR" 2>/dev/null || true; \
-            fi; \
-        done; \
-        for runner_file in /tmp/offline/lutris-runners/*.tar.xz; do \
-            if [ -f "$runner_file" ]; then \
-                runner_name=$(basename "$runner_file" .tar.xz); \
-                echo "    Extracting: $runner_name"; \
-                tar -xJf "$runner_file" -C "$RUNNERS_DIR" 2>/dev/null || true; \
-            fi; \
-        done; \
-        for runner_file in /tmp/offline/lutris-runners/*.tar.zst; do \
-            if [ -f "$runner_file" ]; then \
-                runner_name=$(basename "$runner_file" .tar.zst); \
-                echo "    Extracting: $runner_name"; \
-                tar -I zstd -xf "$runner_file" -C "$RUNNERS_DIR" 2>/dev/null || true; \
-            fi; \
-        done; \
-        for runner_file in /tmp/offline/lutris-runners/*.zip; do \
-            if [ -f "$runner_file" ]; then \
-                runner_name=$(basename "$runner_file" .zip); \
-                echo "    Extracting: $runner_name"; \
-                command -v unzip >/dev/null 2>&1 && unzip -q "$runner_file" -d "$RUNNERS_DIR" 2>/dev/null || true; \
-            fi; \
-        done; \
-    else \
-        echo "  Offline Lutris runners not found. Install them post-boot using Lutris GUI or:"; \
-        echo "    lutris --runner=dw-proton --runner=dxvk --runner=vkd3d-proton"; \
-    fi && \
-    dnf -y clean all && rm -rf /var/cache/dnf
+# Install Lutris Runners (Dw Proton, DXVK, VKD3D-Proton, Proton-GE) from offline repo (Removed due to inability to reliably extract and install all runners in a single RUN command offline. Users can install runners post-boot via Lutris GUI or CLI.)
+# RUN --mount=type=bind,source=offline-repo/lutris-runners,target=/tmp/offline/lutris-runners,readonly \
+#     echo "Setting up Lutris runners (Dw Proton, DXVK, VKD3D-Proton, Proton-GE)..." && \
+#     mkdir -p /opt/lutris-runners && \
+#     RUNNERS_DIR="/opt/lutris-runners" && \
+#     if [ -n "$(find /tmp/offline/lutris-runners -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.zip' \) 2>/dev/null)" ]; then \
+#         echo "  Installing runners from offline repo..."; \
+#         for runner_file in /tmp/offline/lutris-runners/*.tar.gz; do \
+#             if [ -f "$runner_file" ]; then \
+#                 runner_name=$(basename "$runner_file" .tar.gz); \
+#                 echo "    Extracting: $runner_name"; \
+#                 tar -xzf "$runner_file" -C "$RUNNERS_DIR" 2>/dev/null || true; \
+#             fi; \
+#         done; \
+#         for runner_file in /tmp/offline/lutris-runners/*.tar.xz; do \
+#             if [ -f "$runner_file" ]; then \
+#                 runner_name=$(basename "$runner_file" .tar.xz); \
+#                 echo "    Extracting: $runner_name"; \
+#                 tar -xJf "$runner_file" -C "$RUNNERS_DIR" 2>/dev/null || true; \
+#             fi; \
+#         done; \
+#         for runner_file in /tmp/offline/lutris-runners/*.tar.zst; do \
+#             if [ -f "$runner_file" ]; then \
+#                 runner_name=$(basename "$runner_file" .tar.zst); \
+#                 echo "    Extracting: $runner_name"; \
+#                 tar -I zstd -xf "$runner_file" -C "$RUNNERS_DIR" 2>/dev/null || true; \
+#             fi; \
+#         done; \
+#         for runner_file in /tmp/offline/lutris-runners/*.zip; do \
+#             if [ -f "$runner_file" ]; then \
+#                 runner_name=$(basename "$runner_file" .zip); \
+#                 echo "    Extracting: $runner_name"; \
+#                 command -v unzip >/dev/null 2>&1 && unzip -q "$runner_file" -d "$RUNNERS_DIR" 2>/dev/null || true; \
+#             fi; \
+#         done; \
+#     else \
+#         echo "  Offline Lutris runners not found. Install them post-boot using Lutris GUI or:"; \
+#         echo "    lutris --runner=dw-proton --runner=dxvk --runner=vkd3d-proton"; \
+#     fi && \
+#     dnf -y clean all && rm -rf /var/cache/dnf
 
 # Prepare Lutris runners for user accounts (link from /opt/lutris-runners to $HOME/.local/share/lutris/runners and $HOME/.local/share/lutris/runtime)
-RUN mkdir -p /etc/skel/.local/share/lutris/runners && \
-    mkdir -p /etc/skel/.local/share/lutris/runtime && \
-    ln -s /opt/lutris-runners/dw-proton* /etc/skel/.local/share/lutris/runners/ 2>/dev/null || true && \
-    ln -s /opt/lutris-runners/dxvk* /etc/skel/.local/share/lutris/runtime/ 2>/dev/null || true && \
-    ln -s /opt/lutris-runners/vkd3d-proton* /etc/skel/.local/share/lutris/runtime/ 2>/dev/null || true && \
-    ln -s /opt/lutris-runners/proton-ge* /etc/skel/.local/share/lutris/runners/ 2>/dev/null || true
+# RUN mkdir -p /etc/skel/.local/share/lutris/runners && \
+#     mkdir -p /etc/skel/.local/share/lutris/runtime && \
+#     ln -s /opt/lutris-runners/dw-proton* /etc/skel/.local/share/lutris/runners/ 2>/dev/null || true && \
+#     ln -s /opt/lutris-runners/dxvk* /etc/skel/.local/share/lutris/runtime/ 2>/dev/null || true && \
+#     ln -s /opt/lutris-runners/vkd3d-proton* /etc/skel/.local/share/lutris/runtime/ 2>/dev/null || true && \
+#     ln -s /opt/lutris-runners/proton-ge* /etc/skel/.local/share/lutris/runners/ 2>/dev/null || true
 
 # Install Docker Desktop - OPTIONAL (404MB offline package)
 # To exclude, use: podman build --build-arg EXCLUDE_DOCKER_DESKTOP=yes
@@ -810,7 +888,7 @@ COPY offline-repo/vscode-extensions/*.vsix /opt/vscode-extensions/
 # Post-install scripts folder removed; using consolidated script only
 
 # Include image README inside the system image (alongside helper scripts)
-COPY BOOTC-README.md /usr/local/bin/bootc/BOOTC-README.md
+COPY docs/BOOTC-README.md /usr/local/bin/bootc/BOOTC-README.md
 
 # Create JavaScript frameworks installer
 # Prefer pre-cached npm tarballs (if provided by offline repo)
@@ -1004,7 +1082,7 @@ RUN --mount=type=bind,source=offline-repo/helm,target=/tmp/offline/helm,readonly
         echo "✓ helm installed from cache: $(helm version 2>/dev/null | head -1 || echo 'version check skipped')"; \
     else \
         echo "⚠ helm binary not found in offline-repo/helm/"; \
-        echo "  Run fetch_helm.sh to download: ./bootc_ostree/fedora/image/scripts/fetch_helm.sh"; \
+        echo "  Run fetch_helm.sh to download: ./bootc_ostree/fedora/fetch-scripts/fetch_helm.sh"; \
     fi
 
 # Stage k3s binary and air-gap images for offline installs
@@ -1016,7 +1094,7 @@ RUN --mount=type=bind,source=offline-repo/k3s,target=/tmp/offline/k3s,readonly \
         echo "✓ k3s installed: $($INSTALL_DIR/k3s --version 2>/dev/null | head -1 || echo 'version check skipped')"; \
     else \
         echo "⚠ k3s binary not found in offline-repo/k3s/"; \
-        echo "  Run fetch_k3s_binary.sh to download: ./bootc_ostree/fedora/image/scripts/fetch_k3s_binary.sh"; \
+        echo "  Run fetch_k3s_binary.sh to download: ./bootc_ostree/fedora/fetch-scripts/fetch_k3s_binary.sh"; \
     fi && \
     if [ -n "$(ls -A /tmp/offline/k3s/k3s-airgap-images-*.tar.zst 2>/dev/null)" ]; then \
         echo "Staging k3s air-gap images to /usr/share/k3s..."; \
@@ -1031,7 +1109,7 @@ RUN --mount=type=bind,source=offline-repo/k3s,target=/tmp/offline/k3s,readonly \
         echo "  Copy into place at runtime: /var/lib/rancher/k3s/agent/images/"; \
     else \
         echo "⚠ No k3s air-gap artifacts found in offline-repo/k3s/"; \
-        echo "  Run fetch_k3s_images.sh to download: ./bootc_ostree/fedora/image/scripts/fetch_k3s_images.sh"; \
+        echo "  Run fetch_k3s_images.sh to download: ./bootc_ostree/fedora/fetch-scripts/fetch_k3s_images.sh"; \
     fi
 
 # Configure k3s for air-gapped operation.
@@ -2160,9 +2238,15 @@ RUN systemctl enable gdm || true && \
     systemctl enable xrdp || true && \
     if systemctl list-unit-files | grep -q '^bootc-fetch-apply-updates\.timer'; then systemctl enable bootc-fetch-apply-updates.timer || true; fi && \
     for UNIT in nvidia-suspend.service nvidia-hibernate.service nvidia-resume.service nvidia-powerd.service switcheroo-control.service; do if systemctl list-unit-files | grep -q "^${UNIT}"; then systemctl enable "$UNIT" || true; fi; done && \
-    systemctl enable k3s.service || true && \
-    systemctl enable k3s-kubeconfig-distribute.service || true && \
-    systemctl enable k3s-route-setup.service || true && \
+    if [ -x /usr/local/bin/k3s ]; then \
+        systemctl enable k3s.service || true; \
+        systemctl enable k3s-kubeconfig-distribute.service || true; \
+        systemctl enable k3s-route-setup.service || true; \
+    else \
+        echo "k3s binary not present; leaving k3s services disabled"; \
+    fi && \
+    systemctl enable firewalld.service || true && \
+    systemctl enable bootc-firewalld-configure.service || true && \
     systemctl mask systemd-remount-fs.service || true && \
     systemctl set-default graphical.target || true && \
     ln -sf /usr/lib/systemd/system/graphical.target /etc/systemd/system/default.target

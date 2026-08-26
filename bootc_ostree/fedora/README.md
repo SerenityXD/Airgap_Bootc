@@ -56,6 +56,15 @@ Builds both interactive and non-interactive variants.
 
 ## 2. Offline Payloads
 
+The Fedora build tree is organized by responsibility:
+- `image/`: Containerfiles and image build inputs.
+- `fetch-scripts/`: Offline payload download and preparation tools.
+- `build-scripts/`: ISO and OCI build orchestration.
+- `tests/`: Shell and workflow checks.
+- `output/`: Generated ISO, OCI, manifest, and log files.
+
+Vendor payloads intentionally remain grouped under `image/offline-repo/<vendor>/` because those directories are the offline artifact interface used by fetchers and Containerfiles.
+
 ### Fetch all supported payloads
 ```bash
 ./bootc_ostree/fedora/fetch_all_offline.sh
@@ -63,21 +72,20 @@ Builds both interactive and non-interactive variants.
 
 ### Individual fetch scripts
 Located in:
-- `bootc_ostree/fedora/image/scripts/`
+- `bootc_ostree/fedora/fetch-scripts/`
 
 Common examples:
 ```bash
-./bootc_ostree/fedora/image/scripts/fetch_offline_rpms.sh --all --skip-existing
-./bootc_ostree/fedora/image/scripts/fetch_gimp.sh
-./bootc_ostree/fedora/image/scripts/fetch_krita.sh
-DAVINCI_RESOLVE_FILE=/path/to/DaVinci_Resolve_Linux.zip ./bootc_ostree/fedora/image/scripts/fetch_davinci_resolve.sh
-UNREAL_ENGINE_FILE=/path/to/UnrealEngine-Linux.tar.xz ./bootc_ostree/fedora/image/scripts/fetch_unreal_engine.sh
-./bootc_ostree/fedora/image/scripts/fetch_k3s_images.sh
-./bootc_ostree/fedora/image/scripts/fetch_openshift_tools.sh
-./bootc_ostree/fedora/image/scripts/fetch_helm.sh
-./bootc_ostree/fedora/image/scripts/fetch_k3s_binary.sh
-WALLPAPER_REPO_URL=https://github.com/GNOME/gnome-backgrounds.git WALLPAPER_REPO_SUBDIR=backgrounds ./bootc_ostree/fedora/image/scripts/fetch_wallpapers.sh
-./bootc_ostree/fedora/image/scripts/create-npm-tarballs.sh
+./bootc_ostree/fedora/fetch-scripts/fetch_offline_rpms.sh --all --skip-existing
+./bootc_ostree/fedora/fetch-scripts/fetch_gimp.sh
+./bootc_ostree/fedora/fetch-scripts/fetch_krita.sh
+DAVINCI_RESOLVE_FILE=/path/to/DaVinci_Resolve_Linux.zip ./bootc_ostree/fedora/fetch-scripts/fetch_davinci_resolve.sh
+UNREAL_ENGINE_FILE=/path/to/UnrealEngine-Linux.tar.xz ./bootc_ostree/fedora/fetch-scripts/fetch_unreal_engine.sh
+./bootc_ostree/fedora/fetch-scripts/fetch_k3s_images.sh
+./bootc_ostree/fedora/fetch-scripts/fetch_openshift_tools.sh
+./bootc_ostree/fedora/fetch-scripts/fetch_helm.sh
+./bootc_ostree/fedora/fetch-scripts/fetch_k3s_binary.sh
+./bootc_ostree/fedora/fetch-scripts/create-npm-tarballs.sh
 ```
 
 ### Payload locations
@@ -268,7 +276,7 @@ Alternative tools: Ventoy, Balena Etcher, Rufus (DD mode).
 - `build-scripts/build_export_iso.sh`: canonical build entrypoint.
 - `build-scripts/build-iso-helper.sh`: compatibility wrapper only.
 - `fetch_all_offline.sh`: orchestrates all fetch scripts.
-- `image/scripts/fetch_*.sh`: vendor/tool-specific fetchers.
+- `fetch-scripts/fetch_*.sh`: vendor/tool-specific fetchers.
 - `image/Containerfile`: core system image definition.
 
 ## 9. Documentation Map

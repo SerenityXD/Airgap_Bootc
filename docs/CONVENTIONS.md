@@ -2,6 +2,8 @@
 
 ## Path Conventions
 - All build and image workflow paths are rooted at `bootc_ostree/fedora/`.
+- `image/` is the Podman build context: keep Containerfiles at its root, place build inputs in `config/`, `assets/`, and `docs/`, and keep vendor payloads under `offline-repo/<vendor>/`.
+- `fetch-scripts/` owns offline payload download and preparation tools; it writes artifacts into `image/offline-repo/`.
 - Avoid machine-specific absolute paths in docs.
 - Generated outputs remain under `bootc_ostree/fedora/output/` and `bootc_ostree/fedora/oci-image/`.
 
